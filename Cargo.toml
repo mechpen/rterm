@@ -1,0 +1,13 @@
+[package]
+name = "rt"
+version = "0.0.1"
+authors = ["Wenhua Zhao <whzhao@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+libc = "0.2"
+x11 = "2.0"
+
+[[bin]]
+name = "rt"
+path = "src/bin/main.rs"
