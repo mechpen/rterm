@@ -6,6 +6,7 @@ use std::mem;
 use std::iter;
 use std::os::raw::*;
 use std::fs::File;
+use std::cmp::Ordering;
 use std::ops::RangeBounds;
 use std::convert::TryFrom;
 
@@ -23,6 +24,10 @@ use crate::{
         EscBuf,
         Esc,
         Csi,
+    },
+    snap::{
+        is_delim,
+        SnapMode,
     },
     sys,
     utf8,
@@ -65,7 +70,6 @@ pub struct Glyph {
 impl Glyph {
     pub fn new(u: u32, attr: u32, fg: u8, bg: u8) -> Self {
         Glyph { u, attr, fg, bg }
-        
     }
 }
 
@@ -93,6 +97,60 @@ impl TCursor {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct Point {
+    pub x: usize,
+    pub y: usize,
+}
+
+impl Point {
+    pub fn new(x: usize, y: usize) -> Self {
+        Point { x, y }
+    }
+}
+
+impl Ord for Point {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.y.cmp(&other.y) {
+            Ordering::Equal => self.x.cmp(&other.x),
+            o => o,
+        }
+    }
+}
+
+impl PartialOrd for Point {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Point {
+    fn eq(&self, other: &Self) -> bool {
+        self.x == other.x && self.y == other.y
+    }
+}
+
+impl Eq for Point {}
+
+struct Selection {
+    pub snap:  SnapMode,
+    pub empty: bool,
+    pub ob:    Point,
+    pub oe:    Point,
+    pub nb:    Point,
+    pub ne:    Point,
+}
+
+impl Selection {
+    pub fn new() -> Self {
+        Selection {
+            snap: SnapMode::None, empty: true,
+            ob: Point::new(0, 0), oe: Point::new(0, 0),
+            nb: Point::new(0, 0), ne: Point::new(0, 0),
+        }
+    }
+}
+
 // term mode flags
 const MODE_WRAP:      u32 = 1 << 0;
 const MODE_INSERT:    u32 = 1 << 1;
@@ -114,6 +172,7 @@ pub struct Term {
     lines: Vec<Vec<Glyph>>,
     dirty: Vec<bool>,
     tabs:  Vec<bool>,
+    sel:   Selection,
 
     fg:     u8,
     bg:     u8,
@@ -151,6 +210,7 @@ impl Term {
             lines: Vec::new(),
             dirty: Vec::new(),
             tabs:  Vec::new(),
+            sel:   Selection::new(),
 
             fg:     c.g.fg,
             bg:     c.g.bg,
@@ -288,6 +348,193 @@ impl Term {
         Ok(n)
     }
 
+    pub fn selstart(&mut self, x: i32, y: i32, snap: SnapMode) {
+        self.selclear();
+
+        self.sel.snap = snap;
+        self.tsetdirt(self.sel.nb.y ..= self.sel.ne.y);
+
+        self.sel.ob.x = limit(x, 0, self.cols as i32 -1) as usize;
+        self.sel.ob.y = limit(y, 0, self.rows as i32 -1) as usize;
+        self.sel.oe.x = self.sel.ob.x;
+        self.sel.oe.y = self.sel.ob.y;
+
+        match self.sel.snap {
+            SnapMode::None => (),
+            _ => self.selnormalize(),
+        }
+    }
+
+    pub fn selextend(&mut self, x: i32, y: i32) {
+        self.sel.oe.x = limit(x, 0, self.cols as i32 -1) as usize;
+        self.sel.oe.y = limit(y, 0, self.rows as i32 -1) as usize;
+        self.selnormalize();
+    }
+
+    pub fn selected(&self, x: usize, y: usize) -> bool {
+        !self.sel.empty &&
+            is_between(y, self.sel.nb.y, self.sel.ne.y) &&
+            (y != self.sel.nb.y || x >= self.sel.nb.x) &&
+            (y != self.sel.ne.y || x <= self.sel.ne.x)
+    }
+
+    pub fn selclear(&mut self) {
+        self.sel.empty = true;
+    }
+
+    pub fn getsel(&self) -> Option<Vec<u8>> {
+        if self.sel.empty {
+            return None
+        }
+
+        let mut bytes = Vec::new();
+
+        for y in self.sel.nb.y ..= self.sel.ne.y {
+            let start = if y == self.sel.nb.y {
+                self.sel.nb.x
+            } else {
+                0
+            };
+
+            let end = if y == self.sel.ne.y {
+                self.sel.ne.x
+            } else {
+                self.cols - 1
+            };
+
+            let text_end = cmp::min(end+1, self.text_end(y));
+            for x in start .. text_end {
+                let mut b: [u8; utf8::UTF_SIZE] = [0; utf8::UTF_SIZE];
+                let l = utf8::encode(self.lines[y][x].u, &mut b);
+                bytes.extend_from_slice(&b[..l]);
+            }
+
+            if end == self.cols - 1 && !self.is_wrap_line(y) {
+                bytes.push(b'\n');
+            }
+        }
+
+        Some(bytes)
+    }
+
+    fn selnormalize(&mut self) {
+        let (mut nb, mut ne) = sort_pair(self.sel.ob, self.sel.oe);
+
+        match self.sel.snap {
+            SnapMode::None => {
+                let end = self.text_end(nb.y);
+                if nb.x > end {
+                    nb.x = end;
+                }
+                if self.text_end(ne.y) <= ne.x {
+                    ne.x = self.cols - 1;
+                }
+            },
+            SnapMode::Word => {
+                nb = self.snapword(nb, Self::prev);
+                ne = self.snapword(ne, Self::next);
+            },
+            SnapMode::Line => {
+                nb.x = 0;
+                while nb.y > 0 && self.is_wrap_line(nb.y-1) {
+                    nb.y -= 1;
+                }
+                ne.x = self.cols - 1;
+                while ne.y < self.rows - 1 && self.is_wrap_line(ne.y) {
+                    ne.y += 1;
+                }
+            },
+        }
+
+        let bot = cmp::min(nb.y, self.sel.nb.y);
+        let top = cmp::max(ne.y, self.sel.ne.y);
+        self.tsetdirt(bot ..= top);
+
+        self.sel.empty = false;
+        self.sel.nb = nb;
+        self.sel.ne = ne;
+    }
+
+    fn selscroll(&mut self, orig: usize, n: i32) {
+        if self.sel.empty {
+            return;
+        }
+
+        if (!is_between(self.sel.ob.y, orig, self.bot) ||
+            !is_between(self.sel.ob.y, orig, self.bot)) {
+            self.selclear();
+            return;
+        }
+
+        let by = self.sel.ob.y as i32 + n;
+        let ey = self.sel.oe.y as i32 + n;
+        if (!is_between(by, orig as i32, self.bot as i32) ||
+            !is_between(ey, orig as i32, self.bot as i32)) {
+            self.selclear();
+            return;
+        }
+
+        self.sel.ob.y = by as usize;
+        self.sel.oe.y = ey as usize;
+        self.selnormalize();
+    }
+
+    fn prev(&self, p: &Point) -> Option<Point> {
+        if p.x > 0 {
+            return Some(Point::new(p.x-1, p.y))
+        }
+        if p.y > 0 {
+            let p = Point::new(self.cols-1, p.y-1);
+            if is_set(self.lines[p.y][p.x].attr, ATTR_WRAP) {
+                return Some(p)
+            }
+        }
+        None
+    }
+
+    fn next(&self, p: &Point) -> Option<Point> {
+        if p.x < self.cols - 1 {
+            return Some(Point::new(p.x+1, p.y))
+        }
+        if p.y < self.rows - 1 {
+            if is_set(self.lines[p.y][p.x].attr, ATTR_WRAP) {
+                return Some(Point::new(0, p.y+1))
+            }
+        }
+        None
+    }
+
+    fn snapword<F>(&self, p: Point, f: F) -> Point
+    where F: Fn(&Self, &Point)->Option<Point>
+    {
+        let u = self.lines[p.y][p.x].u;
+        let delim = is_delim(u);
+
+        let mut p = p;
+        while let Some(next) = f(self, &p) {
+            let next_u = self.lines[next.y][next.x].u;
+            if next_u != u && (delim || is_delim(next_u)) {
+                break;
+            }
+            p = next;
+        }
+        p
+    }
+
+    fn text_end(&self, y: usize) -> usize {
+        let mut x = self.cols;
+        if !self.is_wrap_line(y) {
+            while x > 0 && self.lines[y][x-1].u == b' ' as u32 {
+                x -= 1
+            }
+        }
+        x
+    }
+
+    fn is_wrap_line(&self, y: usize) -> bool {
+        is_set(self.lines[y][self.cols-1].attr, ATTR_WRAP)
+    }
+
     fn ttywriteraw(&mut self, s: &[u8]) -> Result<()> {
         let mut n = 0;
 
@@ -352,11 +599,11 @@ impl Term {
 
         self.tmoveto(0, 0);
         self.tcursor(true);
-	self.tclearregion(0..self.cols, 0..self.rows);
+        self.tclearregion(0..self.cols, 0..self.rows);
     }
 
     fn resettitle(&mut self) {
-        // FIXME
+        // FIXME: call win method
     }
 
     fn tnewline(&mut self, first_col: bool) {
@@ -371,12 +618,12 @@ impl Term {
     }
 
     fn tsetscroll(&mut self, top: usize, bot: usize) {
-	let mut top = cmp::min(top, self.rows-1);
-	let mut bot = cmp::min(bot, self.rows-1);
+        let mut top = cmp::min(top, self.rows-1);
+        let mut bot = cmp::min(bot, self.rows-1);
         let (top, bot) = sort_pair(top, bot);
 
-	self.top = top;
-	self.bot = bot;
+        self.top = top;
+        self.bot = bot;
     }
 
     fn tscrollup(&mut self, orig: usize, n: usize) {
@@ -389,6 +636,8 @@ impl Term {
         self.tclearregion(0..self.cols, orig..orig+n);
         self.tsetdirt(orig+n..=self.bot);
         self.lines[orig..=self.bot].rotate_left(n);
+
+        self.selscroll(orig, -(n as i32));
     }
 
     fn tscrolldown(&mut self, orig: usize, n: usize) {
@@ -396,11 +645,13 @@ impl Term {
         if n < 1 {
             return;
         }
-	let n = cmp::min(n, self.bot-orig+1);
+        let n = cmp::min(n, self.bot-orig+1);
 
-	self.tsetdirt(orig..self.bot-n+1);
-	self.tclearregion(0..self.cols, self.bot-n+1..=self.bot);
+        self.tsetdirt(orig..self.bot-n+1);
+        self.tclearregion(0..self.cols, self.bot-n+1..=self.bot);
         self.lines[orig..=self.bot].rotate_right(n);
+
+        self.selscroll(orig, n as i32);
     }
 
     fn tsetdirt<R: RangeBounds<usize>>(&mut self, range: R) {
@@ -416,6 +667,9 @@ impl Term {
             self.dirty[y] = true;
             for x in assert_range(&xrange) {
                 self.lines[y][x] = self.blank;
+                if self.selected(x, y) {
+                    self.selclear();
+                }
             }
         }
     }
@@ -520,8 +774,13 @@ impl Term {
 
     fn tputc(&mut self, u: u32) {
         if is_set(self.c.state, CURSOR_WRAPNEXT) {
+            self.lines[self.c.y][self.c.x].attr |= ATTR_WRAP;
             self.tnewline(true);
             mod_flag(&mut self.c.state, false, CURSOR_WRAPNEXT);
+        }
+
+        if self.selected(self.c.x, self.c.y) {
+            self.selclear();
         }
 
         self.dirty[self.c.y] = true;
@@ -544,7 +803,9 @@ impl Term {
             self.c_save = self.c.clone();
         } else {
             self.c = self.c_save.clone();
-            self.tmoveto(self.c.x, self.c.y);  // may saved from a larger size
+            // may saved from a larger size, call
+            // tmoveto to normalize cursor location
+            self.tmoveto(self.c.x, self.c.y);
         }
     }
 
@@ -594,19 +855,19 @@ impl Term {
                     mod_flag(&mut self.c.state, set, CURSOR_ORIGIN);
                     self.tmoveato(0, 0);
                 },
-		(true, 7) =>  /* DECAWM -- Auto wrap */
+                (true, 7) =>  /* DECAWM -- Auto wrap */
                     mod_flag(&mut self.mode, set, MODE_WRAP),
-		(true, 1048) =>
+                (true, 1048) =>
                     self.tcursor(set),
-		(true, 0)  |  /* Error (IGNORED) */
-		(true, 2)  |  /* DECANM -- ANSI/VT52 (IGNORED) */
-		(true, 3)  |  /* DECCOLM -- Column  (IGNORED) */
-		(true, 4)  |  /* DECSCLM -- Scroll (IGNORED) */
-		(true, 8)  |  /* DECARM -- Auto repeat (IGNORED) */
-		(true, 18) |  /* DECPFF -- Printer feed (IGNORED) */
-		(true, 19) |  /* DECPEX -- Printer extent (IGNORED) */
-		(true, 42) |  /* DECNRCM -- National characters (IGNORED) */
-		(true, 12) => /* att610 -- Start blinking cursor (IGNORED) */
+                (true, 0)  |  /* Error (IGNORED) */
+                (true, 2)  |  /* DECANM -- ANSI/VT52 (IGNORED) */
+                (true, 3)  |  /* DECCOLM -- Column  (IGNORED) */
+                (true, 4)  |  /* DECSCLM -- Scroll (IGNORED) */
+                (true, 8)  |  /* DECARM -- Auto repeat (IGNORED) */
+                (true, 18) |  /* DECPFF -- Printer feed (IGNORED) */
+                (true, 19) |  /* DECPEX -- Printer extent (IGNORED) */
+                (true, 42) |  /* DECNRCM -- National characters (IGNORED) */
+                (true, 12) => /* att610 -- Start blinking cursor (IGNORED) */
                     (),
                 (false, 0) =>  /* Error (IGNORED) */
                     (),
@@ -643,39 +904,39 @@ impl Term {
 
     fn eschandle(&mut self, u: u8) {
         match u {
-	    b'D' => /* IND -- Linefeed */
+            b'D' => /* IND -- Linefeed */
             {
-		if self.c.y == self.bot {
-		    self.tscrollup(self.top, 1);
-		} else {
-		    self.tmoveto(self.c.x, self.c.y+1);
-		}
+                if self.c.y == self.bot {
+                    self.tscrollup(self.top, 1);
+                } else {
+                    self.tmoveto(self.c.x, self.c.y+1);
+                }
             },
-	    b'E' => /* NEL -- Next line */
-	        self.tnewline(true), /* always go to first col */
-	    b'H' => /* HTS -- Horizontal tab stop */
-		self.tabs[self.c.x] = true,
-	    b'M' => /* RI -- Reverse index */
+            b'E' => /* NEL -- Next line */
+                self.tnewline(true), /* always go to first col */
+            b'H' => /* HTS -- Horizontal tab stop */
+                self.tabs[self.c.x] = true,
+            b'M' => /* RI -- Reverse index */
             {
-		if self.c.y == self.top {
-		    self.tscrolldown(self.top, 1);
-		} else {
-		    self.tmoveto(self.c.x, self.c.y-1);
-		}
+                if self.c.y == self.top {
+                    self.tscrolldown(self.top, 1);
+                } else {
+                    self.tmoveto(self.c.x, self.c.y-1);
+                }
             },
-	    b'Z' => /* DECID -- Identify Terminal */
+            b'Z' => /* DECID -- Identify Terminal */
             {
                 let _ = self.ttywrite(VTIDEN, false);
             },
-	    b'c' => /* RIS -- Reset to initial state */
+            b'c' => /* RIS -- Reset to initial state */
             {
-	        self.treset();
-		self.resettitle();
+                self.treset();
+                self.resettitle();
             },
-	    b'7' => /* DECSC -- Save Cursor */
-		self.tcursor(true),
-	    b'8' => /* DECRC -- Restore Cursor */
-		self.tcursor(false),
+            b'7' => /* DECSC -- Save Cursor */
+                self.tcursor(true),
+            b'8' => /* DECRC -- Restore Cursor */
+                self.tcursor(false),
             b'=' |
             b'>' => (),
             _ => println!("unknown esc {}", u as char),
@@ -686,13 +947,13 @@ impl Term {
         let dft_arg0 = cmp::max(csi.args[0], 1);
 
         match csi.mode {
-	    b'@' => /* ICH -- Insert <n> blank char */
-		self.tinsertblank(dft_arg0),
-	    b'A' => /* CUU -- Cursor <n> Up */
-		self.tmoveto(self.c.x, self.c.y.saturating_sub(dft_arg0)),
-	    b'B' |  /* CUD -- Cursor <n> Down */
-	    b'e' => /* VPR -- Cursor <n> Down */
-	        self.tmoveto(self.c.x, self.c.y+dft_arg0),
+            b'@' => /* ICH -- Insert <n> blank char */
+                self.tinsertblank(dft_arg0),
+            b'A' => /* CUU -- Cursor <n> Up */
+                self.tmoveto(self.c.x, self.c.y.saturating_sub(dft_arg0)),
+            b'B' |  /* CUD -- Cursor <n> Down */
+            b'e' => /* VPR -- Cursor <n> Down */
+                self.tmoveto(self.c.x, self.c.y+dft_arg0),
             b'c' if csi.args[0] == 0 => /* DA -- Device Attributes */
             {
                 let _ = self.ttywrite(VTIDEN, false);
@@ -700,13 +961,13 @@ impl Term {
             b'C' |  /* CUF -- Cursor <n> Forward */
             b'a' => /* HPR -- Cursor <n> Forward */
                 self.tmoveto(self.c.x+dft_arg0, self.c.y),
-	    b'D' => /* CUB -- Cursor <n> Backward */
-		self.tmoveto(self.c.x.saturating_sub(dft_arg0), self.c.y),
-	    b'E' => /* CNL -- Cursor <n> Down and first col */
-		self.tmoveto(0, self.c.y+dft_arg0),
-	    b'F' => /* CPL -- Cursor <n> Up and first col */
-		self.tmoveto(0, self.c.y.saturating_sub(dft_arg0)),
-	    b'g' => /* TBC -- Tabulation clear */
+            b'D' => /* CUB -- Cursor <n> Backward */
+                self.tmoveto(self.c.x.saturating_sub(dft_arg0), self.c.y),
+            b'E' => /* CNL -- Cursor <n> Down and first col */
+                self.tmoveto(0, self.c.y+dft_arg0),
+            b'F' => /* CPL -- Cursor <n> Up and first col */
+                self.tmoveto(0, self.c.y.saturating_sub(dft_arg0)),
+            b'g' => /* TBC -- Tabulation clear */
             {
                 match csi.args[0] {
                     0 => /* clear current tab stop */
@@ -720,40 +981,40 @@ impl Term {
                     _ => println!("unknown {}", csi),
                 }
             },
-	    b'G'|   /* CHA -- Move to <col> */
-	    b'`' => /* HPA */
-		self.tmoveto(dft_arg0-1, self.c.y),
-	    b'H' |  /* CUP -- Move to <row> <col> */
-	    b'f' => /* HVP */
+            b'G'|   /* CHA -- Move to <col> */
+            b'`' => /* HPA */
+                self.tmoveto(dft_arg0-1, self.c.y),
+            b'H' |  /* CUP -- Move to <row> <col> */
+            b'f' => /* HVP */
             {
                 let mut arg1 = 1;
                 if csi.args.len() >= 2 {
                     arg1 = cmp::max(csi.args[1], 1);
                 }
-		self.tmoveato(arg1-1, dft_arg0-1);
+                self.tmoveato(arg1-1, dft_arg0-1);
             },
-	    b'I' => /* CHT -- Cursor Forward Tabulation <n> tab stops */
-		self.tputtab(dft_arg0 as i32),
-	    b'J' => /* ED -- Clear screen */
+            b'I' => /* CHT -- Cursor Forward Tabulation <n> tab stops */
+                self.tputtab(dft_arg0 as i32),
+            b'J' => /* ED -- Clear screen */
             {
                 let y = self.c.y;
                 match csi.args[0] {
                     0 => /* below */
                     {
-			self.tclearregion(self.c.x..self.cols, y..=y);
-			self.tclearregion(0..self.cols, y+1..self.rows);
+                        self.tclearregion(self.c.x..self.cols, y..=y);
+                        self.tclearregion(0..self.cols, y+1..self.rows);
                     },
                     1 => /* above */
                     {
-			self.tclearregion(0..self.cols, 0..y);
-			self.tclearregion(0..=self.c.x, y..=y);
+                        self.tclearregion(0..self.cols, 0..y);
+                        self.tclearregion(0..=self.c.x, y..=y);
                     },
-		    2 => /* all */
-			self.tclearregion(0..self.cols, 0..self.rows),
+                    2 => /* all */
+                        self.tclearregion(0..self.cols, 0..self.rows),
                     _ => println!("unknown {}", csi),
                 }
             }
-	    b'K' => /* EL erase line */
+            b'K' => /* EL erase line */
             {
                 let y = self.c.y;
                 match csi.args[0] {
@@ -766,52 +1027,52 @@ impl Term {
                     _ => println!("unknown {}", csi),
                 }
             },
-	    b'S' => /* SU -- Scroll <n> line up */
-		self.tscrollup(self.top, dft_arg0),
-	    b'T' => /* SD -- Scroll <n> line down */
-		self.tscrolldown(self.top, dft_arg0),
-	    b'L' => /* IL -- Insert <n> blank lines */
-		self.tinsertblankline(dft_arg0),
-	    b'l' => /* RM -- Reset Mode */
-	        (),//self.tsetmode(csi.private, false, csi.args),
-	    b'M' => /* DL -- Delete <n> lines */
-		self.tdeleteline(dft_arg0),
-	    b'X' => /* ECH -- Erase <n> char */
+            b'S' => /* SU -- Scroll <n> line up */
+                self.tscrollup(self.top, dft_arg0),
+            b'T' => /* SD -- Scroll <n> line down */
+                self.tscrolldown(self.top, dft_arg0),
+            b'L' => /* IL -- Insert <n> blank lines */
+                self.tinsertblankline(dft_arg0),
+            b'l' => /* RM -- Reset Mode */
+                (),//self.tsetmode(csi.private, false, csi.args),
+            b'M' => /* DL -- Delete <n> lines */
+                self.tdeleteline(dft_arg0),
+            b'X' => /* ECH -- Erase <n> char */
             {
-	        self.tclearregion(
+                self.tclearregion(
                     self.c.x..self.c.x+dft_arg0, self.c.y..=self.c.y
                 );
             },
-	    b'P' => /* DCH -- Delete <n> char */
-		self.tdeletechar(dft_arg0),
-	    b'Z' => /* CBT -- Cursor Backward Tabulation <n> tab stops */
-		self.tputtab(-(dft_arg0 as i32)),
-	    b'd' => /* VPA -- Move to <row> */
-		self.tmoveato(self.c.x, dft_arg0-1),
-	    b'h' => /* SM -- Set terminal mode */
-		(),//self.tsetmode(csi.private, true, csi.args),
-	    b'm' => /* SGR -- Terminal attribute (color) */
-		self.tsetattr(csi.args),
-	    b'n' => /* DSR – Device Status Report (cursor position) */
-	    {
+            b'P' => /* DCH -- Delete <n> char */
+                self.tdeletechar(dft_arg0),
+            b'Z' => /* CBT -- Cursor Backward Tabulation <n> tab stops */
+                self.tputtab(-(dft_arg0 as i32)),
+            b'd' => /* VPA -- Move to <row> */
+                self.tmoveato(self.c.x, dft_arg0-1),
+            b'h' => /* SM -- Set terminal mode */
+                (),//self.tsetmode(csi.private, true, csi.args),
+            b'm' => /* SGR -- Terminal attribute (color) */
+                self.tsetattr(csi.args),
+            b'n' => /* DSR – Device Status Report (cursor position) */
+            {
                 if csi.args[0] == 6 {
                     let s = format!("\x1B[{};{}R", self.c.y+1, self.c.x+1);
                     let _ = self.ttywrite(s.as_bytes(), false);
                 }
-	    },
-	    b'r' if !csi.private => /* DECSTBM -- Set Scrolling Region */
+            },
+            b'r' if !csi.private => /* DECSTBM -- Set Scrolling Region */
             {
                 let mut arg1 = self.rows;
                 if csi.args.len() >= 2 {
                     arg1 = cmp::min(csi.args[1], self.rows);
                 }
-		self.tsetscroll(dft_arg0-1, arg1-1);
-		self.tmoveato(0, 0);
-	    },
-	    b's' => /* DECSC -- Save cursor position (ANSI.SYS) */
-		self.tcursor(true),
-	    b'u' => /* DECRC -- Restore cursor position (ANSI.SYS) */
-		self.tcursor(false),
+                self.tsetscroll(dft_arg0-1, arg1-1);
+                self.tmoveato(0, 0);
+            },
+            b's' => /* DECSC -- Save cursor position (ANSI.SYS) */
+                self.tcursor(true),
+            b'u' => /* DECRC -- Restore cursor position (ANSI.SYS) */
+                self.tcursor(false),
             _ => println!("unknown {}", csi),
         }
     }

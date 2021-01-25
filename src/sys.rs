@@ -140,8 +140,8 @@ pub fn execsh() {
 pub fn fdset_new() -> libc::fd_set {
     let mut fdset = MaybeUninit::uninit();
     unsafe {
-	libc::FD_ZERO(fdset.as_mut_ptr());
-	fdset.assume_init()
+        libc::FD_ZERO(fdset.as_mut_ptr());
+        fdset.assume_init()
     }
 }
 
@@ -154,7 +154,7 @@ pub fn fdset_set(fdset: &mut libc::fd_set, fd: c_int, maxfd: &mut c_int) {
 
 pub fn fdset_is_set(fdset: &mut libc::fd_set, fd: c_int) -> bool {
     unsafe {
-	libc::FD_ISSET(fd, fdset)
+        libc::FD_ISSET(fd, fdset)
     }
 }
 
@@ -167,8 +167,8 @@ pub fn select(
 ) -> Result<()> {
     let timeout = timeout.map(|x| {
         libc::timeval {
-	    tv_sec: x.as_secs() as libc::time_t,
-	    tv_usec: x.subsec_micros() as libc::suseconds_t,
+            tv_sec: x.as_secs() as libc::time_t,
+            tv_usec: x.subsec_micros() as libc::suseconds_t,
         }
     });
 

@@ -31,6 +31,7 @@ mod esc;
 mod utf8;
 mod utils;
 mod keymap;
+mod snap;
 
 pub mod win;
 pub mod term;

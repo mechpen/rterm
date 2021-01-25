@@ -1,5 +1,5 @@
-## Todo
+## Copy/Paste
 
-  - only allow use monospace fonts
-  - event loop
-  - more
+- Copy: Auto-copy with selection
+
+- Paste: Shift-Insert or Mouse button 2

@@ -4,6 +4,7 @@ extern crate x11;
 use x11::{
     xlib::*,
     xft::*,
+    keysym::*,
 };
 
 use std::ptr::{
@@ -11,6 +12,7 @@ use std::ptr::{
     null_mut,
 };
 use std::mem;
+use std::slice;
 use std::ffi::CString;
 use std::os::raw::*;
 use std::convert::TryFrom;
@@ -18,6 +20,7 @@ use std::convert::TryFrom;
 use crate::{
     utils::{
         is_set,
+        limit,
     },
     term::{
         Term,
@@ -26,6 +29,7 @@ use crate::{
         ATTR_REVERSE,
         ATTR_BOLD_FAINT,
     },
+    snap::SnapClick,
     sys,
     utf8,
     keymap,
@@ -89,9 +93,13 @@ pub struct XWindow {
     buf:  Pixmap,
     draw: *mut XftDraw,
 
-    term:   Term,
     ch:     usize,
     cw:     usize,
+    term:   Term,
+
+    seltype: Atom,
+    seltext: Option<Vec<u8>>,
+    selsnap: SnapClick,
 
     mode:    u32,
     running: bool,
@@ -106,11 +114,11 @@ impl XWindow {
                 return Err("can't open display".into());
             }
 
-	    let scr = XDefaultScreen(dpy);
-	    let vis = XDefaultVisual(dpy, scr);
+            let scr = XDefaultScreen(dpy);
+            let vis = XDefaultVisual(dpy, scr);
             let root = XRootWindow(dpy, scr);
 
-            let s = CString::new("xos4 Terminus:pixelsize=20:style=Regular")?;
+            let s = CString::new("monospace")?;
             let font = XftFontOpenName(dpy, scr, s.as_ptr() as *mut _);
             if font == null_mut() {
                 return Err("can't load font".into());
@@ -134,9 +142,9 @@ impl XWindow {
             let mut attributes: XSetWindowAttributes = mem::zeroed();
             attributes.colormap = cmap;
             attributes.background_pixel = colors[bg as usize].pixel;
-	    attributes.event_mask = KeyPressMask | KeyReleaseMask
-		| ExposureMask | VisibilityChangeMask | StructureNotifyMask
-		| ButtonMotionMask | ButtonPressMask | ButtonReleaseMask;
+            attributes.event_mask = KeyPressMask | ExposureMask
+                | VisibilityChangeMask | StructureNotifyMask
+                | ButtonMotionMask | ButtonPressMask | ButtonReleaseMask;
 
             let win = XCreateWindow(
                 dpy, root,
@@ -154,7 +162,6 @@ impl XWindow {
 
             let mut gcvalues: XGCValues = mem::zeroed();
             gcvalues.graphics_exposures = False;
-
             let gc = XCreateGC(dpy, root, GCGraphicsExposures as u64, &mut gcvalues);
             let buf = XCreatePixmap(
                 dpy, win,
@@ -171,7 +178,10 @@ impl XWindow {
             let s = CString::new("WM_PROTOCOLS").unwrap();
             let wm_protocols = XInternAtom(dpy, s.as_ptr(), False);
             let mut protocols = [wm_delete_window];
-            XSetWMProtocols(dpy, win, &mut protocols[0] as *mut Atom, 1);
+            XSetWMProtocols(dpy, win, &mut protocols[0] as *mut _, 1);
+            
+            let s = CString::new("UTF8_STRING").unwrap();
+            let seltype = XInternAtom(dpy, s.as_ptr(), False);
 
             XMapWindow(dpy, win);
             XSync(dpy, False);
@@ -181,15 +191,23 @@ impl XWindow {
                 win,
                 scr,
                 vis,
+
                 gc,
                 cmap,
                 colors,
+
                 font,
                 buf,
                 draw,
+
                 cw,
                 ch,
                 term: Term::new(cols, rows, fg, bg)?,
+
+                seltype: seltype,
+                seltext: None,
+                selsnap: SnapClick::new(),
+
                 mode: 0,
                 running: true,
             })
@@ -201,8 +219,8 @@ impl XWindow {
             let mut event: XEvent = mem::zeroed();
             while self.running {
                 XNextEvent(self.dpy, &mut event);
-		if XFilterEvent(&mut event, 0) == 1 {
-		    continue;
+                if XFilterEvent(&mut event, 0) == 1 {
+                    continue;
                 }
 
                 match event.type_ {
@@ -231,7 +249,7 @@ impl XWindow {
                 while XPending(self.dpy) > 0 {
                     XNextEvent(self.dpy, &mut event);
                     if XFilterEvent(&mut event, 0) == 1 {
-		        continue;
+                        continue;
                     }
 
                     // FIXME: function lookup table in rust
@@ -245,7 +263,9 @@ impl XWindow {
                         MotionNotify => self.bmotion(&event.motion)?,
                         ButtonPress => self.bpress(&event.button)?,
                         ButtonRelease => self.brelease(&event.button)?,
-                        _ => (),
+                        SelectionNotify => self.selnotify(&event.selection)?,
+                        SelectionRequest => self.selrequest(&event.selection_request)?,
+                        _ => println!("event type {}", event.type_),
                     }
                 }
 
@@ -261,7 +281,7 @@ impl XWindow {
         let width = (self.cw * cols) as c_uint;
         let height = (self.ch * rows) as c_uint;
         unsafe {
-	    XCopyArea(
+            XCopyArea(
                 self.dpy, self.buf, self.win, self.gc,
                 0, 0, width, height,
                 0, 0
@@ -271,10 +291,10 @@ impl XWindow {
     }
 
     // FIXME: optimize by drawing blocks of the same attr
-    fn xdrawglyph(&self, g: &Glyph, winx: usize, winy: usize) {
+    fn xdrawglyph(&self, g: &Glyph, winx: usize, winy: usize, reverse: bool) {
         let (mut fg, mut bg) = (g.fg, g.bg);
 
-        if is_set(g.attr, ATTR_REVERSE) {
+        if is_set(g.attr, ATTR_REVERSE) ^ reverse {
             mem::swap(&mut fg, &mut bg);
         }
         if g.attr & ATTR_BOLD_FAINT == ATTR_BOLD && g.fg < 8 {
@@ -301,14 +321,15 @@ impl XWindow {
     fn xdrawcursor(&mut self) {
         let c = self.term.get_cursor();
         let lines = self.term.get_lines();
+
         let (ox, oy) = self.term.get_last_pos();
+        let reverse = self.term.selected(ox, oy);
         let g = &lines[oy][ox];
-        self.xdrawglyph(g, ox*self.cw, oy*self.ch);
+        self.xdrawglyph(g, ox*self.cw, oy*self.ch, reverse);
 
         let mut g = lines[c.y][c.x];
-        g.fg = c.g.bg;
-        g.bg = c.g.fg;
-        self.xdrawglyph(&g, c.x*self.cw, c.y*self.ch);
+        let reverse = !self.term.selected(ox, oy);
+        self.xdrawglyph(&g, c.x*self.cw, c.y*self.ch, reverse);
 
         self.term.sync_last_pos();
     }
@@ -321,7 +342,7 @@ impl XWindow {
         for x in 0..cols {
             let xp = x * self.cw;
             let g = &lines[y][x];
-            self.xdrawglyph(g, xp, yp)
+            self.xdrawglyph(g, xp, yp, self.term.selected(x, y));
         }
     }
 
@@ -367,8 +388,12 @@ impl XWindow {
             let mut ksym: u64 = 0;
             let mut buf = [0u8; 4];
             let len = XLookupString(
-                event, buf.as_mut_ptr() as *mut i8, 4, &mut ksym, null_mut()
+                event, buf.as_mut_ptr() as *mut _, 4, &mut ksym, null_mut()
             );
+
+            if ksym as u32 == XK_Insert && is_set(event.state, ShiftMask) {
+                return self.selpaste();
+            }
 
             if let Some(customkey) = self.kmap(ksym as u32, event.state) {
                 self.term.ttywrite(customkey, true)?;
@@ -399,8 +424,8 @@ impl XWindow {
     }
 
     fn resize(&mut self, event: &XConfigureEvent) -> Result<()> {
-	let cols = event.width as usize / self.cw;
-	let rows = event.height as usize / self.ch;
+        let cols = event.width as usize / self.cw;
+        let rows = event.height as usize / self.ch;
 
         if !self.term.tresize(cols, rows) {
             return Ok(());
@@ -411,13 +436,13 @@ impl XWindow {
         let height = rows * self.ch;
 
         unsafe {
-	    XFreePixmap(self.dpy, self.buf);
-	    self.buf = XCreatePixmap(
+            XFreePixmap(self.dpy, self.buf);
+            self.buf = XCreatePixmap(
                 self.dpy, self.win,
                 width as u32, height as u32,
                 XDefaultDepth(self.dpy, self.scr) as u32,
             );
-	    XftDrawChange(self.draw, self.buf);
+            XftDrawChange(self.draw, self.buf);
         }
 
         Ok(())
@@ -443,24 +468,155 @@ impl XWindow {
         Ok(())
     }
 
+    fn evpoint(&self, x: i32, y: i32) -> (i32, i32) {
+        (x / self.cw as i32, y /self.ch as i32)
+    }
+
+    // FIXME: select rectangle
     fn bmotion(&mut self, event: &XMotionEvent) -> Result<()> {
-        println!("{:?}", event);
+        let (x, y) = self.evpoint(event.x, event.y);
+        self.term.selextend(x, y);
         Ok(())
     }
 
     fn bpress(&mut self, event: &XButtonEvent) -> Result<()> {
-        println!("{:?}", event);
+        if event.button == 1 {
+            let snap = self.selsnap.click();
+            let (x, y) = self.evpoint(event.x, event.y);
+            self.term.selstart(x, y, snap);
+        }
         Ok(())
     }
 
     fn brelease(&mut self, event: &XButtonEvent) -> Result<()> {
-        println!("{:?}", event);
+        match event.button {
+            2 => self.selpaste(),
+            1 => self.setsel(event.time),
+            _ => Ok(()),
+        }
+    }
+
+    fn selnotify(&mut self, event: &XSelectionEvent) -> Result<()> {
+        if event.property == 0 {
+            return Ok(())
+        }
+
+        let mut ofs = 0;
+        let mut nitems = 0;
+        let mut rem = 0;
+        let mut t = 0;
+        let mut format = 0;
+        let mut data = null_mut();
+
+        loop {
+            unsafe {
+                if XGetWindowProperty(
+                    self.dpy, self.win, event.property, ofs, 1024, 0, 0,
+                    &mut t, &mut format, &mut nitems, &mut rem, &mut data
+                ) != 0 {
+                    println!("XGetWindowProperty error");
+                    return Ok(());
+                }
+            }
+
+            if t != self.seltype {
+                println!("returned type {}", t);
+            }
+
+            let len = (nitems * (format as u64) / 8) as usize;
+            let buf = unsafe { slice::from_raw_parts(data, len) };
+            self.term.ttywrite(buf, true);
+            unsafe { XFree(data as *mut _) };
+
+            if rem == 0 {
+                break;
+            } else {
+                ofs += (nitems * (format as u64) / 32) as i64;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn selrequest(&self, event: &XSelectionRequestEvent) -> Result<()> {
+        let text = self.seltext.as_ref().ok_or("seltext is none")?;
+
+        unsafe {
+            let s = CString::new("TARGETS")?;
+            let targets = XInternAtom(self.dpy, s.as_ptr(), 0);
+            if event.target == targets {
+                XChangeProperty(
+                    event.display, event.requestor,
+                    event.property, XA_ATOM, 32, PropModeReplace,
+                    &self.seltype as *const _ as *const _, 1,
+                );
+            } else {
+                XChangeProperty(
+                    event.display, event.requestor,
+                    event.property, event.target, 8, PropModeReplace,
+                    text.as_ptr(), text.len() as i32,
+                );
+            }
+
+            let mut xev = XSelectionEvent {
+                type_: SelectionNotify,
+                serial: 0,
+                send_event: 0,
+                display: null_mut(),
+                requestor: event.requestor,
+                selection: event.selection,
+                target: event.target,
+                property: event.property,
+                time: event.time,
+            };
+
+            if XSendEvent(
+                event.display, event.requestor, 1, 0,
+                &mut xev as *mut _ as *mut _,
+            ) == 0 {
+                println!("XSendEvent error");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn setsel(&mut self, time: Time) -> Result<()> {
+        self.seltext = self.term.getsel();
+
+        if self.seltext.is_some() {
+            unsafe {
+                let s = CString::new("CLIPBOARD")?;
+                let clipboard = XInternAtom(self.dpy, s.as_ptr(), 0);
+
+                XSetSelectionOwner(self.dpy, clipboard, self.win, time);
+                XSetSelectionOwner(self.dpy, XA_PRIMARY, self.win, time);
+                if (XGetSelectionOwner(self.dpy, clipboard) != self.win ||
+                    XGetSelectionOwner(self.dpy, XA_PRIMARY) != self.win) {
+                    self.term.selclear();
+                    return Ok(());
+                }
+
+
+            }
+        }
+
+        Ok(())
+    }
+
+    fn selpaste(&mut self) -> Result<()> {
+        unsafe {
+            XConvertSelection(
+                self.dpy, XA_PRIMARY, self.seltype,
+                XA_PRIMARY, self.win, CurrentTime,
+            );
+        }
         Ok(())
     }
 
     pub fn kmap(&self, k: u32, state: c_uint) -> Option<&'static [u8]> {
         if k & 0xFFFF < 0xFD00 {
-	    return None;
+            return None;
         }
 
         for key in keymap::keys {
