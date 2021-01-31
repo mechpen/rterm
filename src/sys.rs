@@ -124,7 +124,7 @@ fn _execsh() -> Result<()> {
     }
 
     let sh = CString::new(sh)?;
-    let args = &[sh.as_ptr()];
+    let args = &[sh.as_ptr(), null()];
     if unsafe { libc::execvp(sh.as_ptr(), args.as_ptr()) } == -1 {
         return Err(error!("execvp errno {}", errno()));
     }

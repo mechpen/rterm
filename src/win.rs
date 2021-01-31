@@ -106,7 +106,10 @@ pub struct XWindow {
 }
 
 impl XWindow {
-    pub fn new(cols: usize, rows: usize, fg: u8, bg: u8) -> Result<Self> {
+    pub fn new(
+        cols: usize, rows: usize, fg: u8, bg: u8,
+        font: Option<&str>
+    ) -> Result<Self> {
         // FIXME: new term first
         unsafe {
             let dpy = XOpenDisplay(null());
@@ -118,7 +121,7 @@ impl XWindow {
             let vis = XDefaultVisual(dpy, scr);
             let root = XRootWindow(dpy, scr);
 
-            let s = CString::new("monospace")?;
+            let s = CString::new(font.unwrap_or("monospace"))?;
             let font = XftFontOpenName(dpy, scr, s.as_ptr() as *mut _);
             if font == null_mut() {
                 return Err("can't load font".into());

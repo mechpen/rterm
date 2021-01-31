@@ -14,8 +14,10 @@ fn usage() {
 fn _main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let mut i = 1;
 
+    let mut font: Option<&str> = None;
+
+    let mut i = 1;
     while i < args.len() {
         let arg = args[i];
         i += 1;
@@ -23,6 +25,11 @@ fn _main() -> Result<()> {
         if arg == "-v" {
             println!("rt-{}", env!("CARGO_PKG_VERSION"));
             return Ok(());
+        }
+        if arg == "-f" {
+            font = Some(args[i]);
+            i += 1;
+            continue;
         }
         if arg == "-e" {
             break
@@ -33,7 +40,7 @@ fn _main() -> Result<()> {
         }
     }
 
-    let mut win = win::XWindow::new(80, 24, 7, 0)?;
+    let mut win = win::XWindow::new(80, 24, 7, 0, font)?;
     win.run()?;
 
     return Ok(());

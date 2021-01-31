@@ -76,7 +76,7 @@ impl Glyph {
 // cursor state flags
 //
 // WRAPNEXT is when cursor at the right of the terminal, it does
-// automatic wrap to new line until new character input.
+// not wrap to new line until new character input.
 //
 // ORIGIN is for cursor movement relative to scroll region.
 const CURSOR_DEFAULT:  u32 = 0;
