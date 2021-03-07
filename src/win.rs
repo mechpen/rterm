@@ -1,507 +1,335 @@
-// FIXME: border
-
-extern crate x11;
-use x11::{
-    xlib::*,
-    xft::*,
-    keysym::*,
-};
-
-use std::ptr::{
-    null,
-    null_mut,
-};
-use std::mem;
+use bitflags::bitflags;
 use std::slice;
-use std::ffi::CString;
+use std::ptr::null_mut;
 use std::os::raw::*;
-use std::convert::TryFrom;
-
-use crate::{
-    utils::{
-        is_set,
-        limit,
-    },
-    term::{
-        Term,
-        Glyph,
-        ATTR_BOLD,
-        ATTR_REVERSE,
-        ATTR_BOLD_FAINT,
-    },
-    snap::SnapClick,
-    sys,
-    utf8,
-    keymap,
-    Result,
+use std::os::unix::io::RawFd;
+use crate::color::{
+    COLOR_NAMES,
+    bg_color,
 };
+use crate::glyph::{
+    GlyphProp,
+    GlyphAttr,
+};
+use crate::utils::term_decode;
+use crate::shortcut::find_shortcut;
+use crate::keymap::map_key;
+use crate::snap::Snap;
+use crate::term::Term;
+use crate::app::app_exit;
+use crate::x11_wrapper as x11;
+use crate::Result;
 
-const colorname: &[&str] = &[
-    /* 8 normal colors */
-    "black",
-    "red3",
-    "green3",
-    "yellow3",
-    "blue2",
-    "magenta3",
-    "cyan3",
-    "gray90",
-    /* 8 bright colors */
-    "gray50",
-    "red",
-    "green",
-    "yellow",
-    "#5c5cff",
-    "magenta",
-    "cyan",
-    "white",
-];
-
-const XC_xterm: c_uint = 152;
-
-const MODE_VISIBLE: u32 = 1 << 0;
-const MODE_FOCUSED: u32 = 1 << 1;
-const MODE_APPKEYPAD: u32 = 1 << 2;
-const MODE_MOUSEBTN: u32 = 1 << 3;
-const MODE_MOUSEMOTION: u32 = 1 << 4;
-const MODE_REVERSE: u32 = 1 << 5;
-const MODE_KBDLOCK: u32 = 1 << 6;
-const MODE_HIDE: u32 = 1 << 7;
-const MODE_APPCURSOR: u32 = 1 << 8;
-const MODE_MOUSESGR: u32 = 1 << 9;
-const MODE_8BIT: u32 = 1 << 10;
-const MODE_BLINK: u32 = 1 << 11;
-const MODE_FBLINK: u32 = 1 << 12;
-const MODE_FOCUS: u32 = 1 << 13;
-const MODE_MOUSEX10: u32 = 1 << 14;
-const MODE_MOUSEMANY: u32 = 1 << 15;
-const MODE_BRCKTPASTE: u32 = 1 << 16;
-const MODE_NUMLOCK: u32 = 1 << 17;
-const MODE_MOUSE: u32 = MODE_MOUSEBTN|MODE_MOUSEMOTION|MODE_MOUSEX10|MODE_MOUSEMANY;
-
-pub struct XWindow {
-    dpy:  *mut Display,
-    win:  Window,
-    scr:  c_int,
-    vis:  *mut Visual,
-
-    gc:     GC,
-    cmap:   Colormap,
-    colors: Vec<XftColor>,
-
-    font: *mut XftFont,
-    buf:  Pixmap,
-    draw: *mut XftDraw,
-
-    ch:     usize,
-    cw:     usize,
-    term:   Term,
-
-    seltype: Atom,
-    seltext: Option<Vec<u8>>,
-    selsnap: SnapClick,
-
-    mode:    u32,
-    running: bool,
+bitflags! {
+    pub struct Mode: u32 {
+        const APPKEYPAD   = 1 << 2;
+        const MOUSEBTN    = 1 << 3;
+        const MOUSEMOTION = 1 << 4;
+        const REVERSE     = 1 << 5;
+        const KBDLOCK     = 1 << 6;
+        const HIDE        = 1 << 7;
+        const APPCURSOR   = 1 << 8;
+        const MOUSESGR    = 1 << 9;
+        const EIGHTBIT    = 1 << 10;
+        const BLINK       = 1 << 11;
+        const FBLINK      = 1 << 12;
+        const FOCUS       = 1 << 13;
+        const MOUSEX10    = 1 << 14;
+        const MOUSEMANY   = 1 << 15;
+        const BRCKTPASTE  = 1 << 16;
+        const NUMLOCK     = 1 << 17;
+        const ECHO        = 1 << 18;
+    }
 }
 
-impl XWindow {
-    pub fn new(
-        cols: usize, rows: usize, fg: u8, bg: u8,
-        font: Option<&str>
-    ) -> Result<Self> {
-        // FIXME: new term first
-        unsafe {
-            let dpy = XOpenDisplay(null());
-            if dpy == null_mut() {
-                return Err("can't open display".into());
-            }
+pub struct Win {
+    visible: bool,
+    focused: bool,
+    mode: Mode,
 
-            let scr = XDefaultScreen(dpy);
-            let vis = XDefaultVisual(dpy, scr);
-            let root = XRootWindow(dpy, scr);
+    dpy: x11::Display,
+    win: x11::Window,
+    scr: c_int,
+    buf: x11::Pixmap,
+    gc: x11::GC,
+    colors: Vec<x11::XftColor>,
+    draw: x11::XftDraw,
+    font: x11::XftFont,
+    cw: usize,
+    ch: usize,
+    ca: usize,
 
-            let s = CString::new(font.unwrap_or("monospace"))?;
-            let font = XftFontOpenName(dpy, scr, s.as_ptr() as *mut _);
-            if font == null_mut() {
-                return Err("can't load font".into());
-            }
-            let cw = (*font).max_advance_width as usize;
-            let ch = (*font).height as usize;
-            let width = cols * cw;
-            let height = rows * ch;
+    sel_type: x11::Atom,
+    sel_snap: Snap,
+    sel_text: Option<String>,
 
-            let cmap = XDefaultColormap(dpy, scr);
-            let mut colors = Vec::with_capacity(colorname.len());
-            for &name in colorname {
-                let mut col = mem::MaybeUninit::uninit();
-                let s = CString::new(name)?;
-                XftColorAllocName(
-                    dpy, vis, cmap, s.as_ptr(), col.as_mut_ptr()
-                );
-                colors.push(col.assume_init());
-            }
+    wm_protocols: x11::Atom,
+    wm_delete_window: x11::Atom,
+}
 
-            let mut attributes: XSetWindowAttributes = mem::zeroed();
-            attributes.colormap = cmap;
-            attributes.background_pixel = colors[bg as usize].pixel;
-            attributes.event_mask = KeyPressMask | ExposureMask
-                | VisibilityChangeMask | StructureNotifyMask
-                | ButtonMotionMask | ButtonPressMask | ButtonReleaseMask;
+impl Win {
+    pub fn new(cols: usize, rows: usize, font: Option<&str>) -> Result<Self> {
+        let dpy = x11::XOpenDisplay()?;
+        let scr = x11::XDefaultScreen(dpy);
+        let vis = x11::XDefaultVisual(dpy, scr);
+        let root = x11::XRootWindow(dpy, scr);
 
-            let win = XCreateWindow(
-                dpy, root,
-                0, 0, width as c_uint, height as c_uint,
-                0,
-                XDefaultDepth(dpy, scr),
-                InputOutput as c_uint,
-                vis,
-                CWBackPixel | CWColormap | CWEventMask,
-                &mut attributes,
-            );
+        let font = font.unwrap_or("monospace");
+        let font = x11::XftFontOpenName(dpy, scr, font)?;
+        let (cw, ch) = x11::font_size(font);
+        let ca = x11::font_ascent(font);
+        let (width, height) = (cols*cw, rows*ch);
 
-            let s = CString::new("rt")?;
-            XStoreName(dpy, win, s.as_ptr() as *mut _);
-
-            let mut gcvalues: XGCValues = mem::zeroed();
-            gcvalues.graphics_exposures = False;
-            let gc = XCreateGC(dpy, root, GCGraphicsExposures as u64, &mut gcvalues);
-            let buf = XCreatePixmap(
-                dpy, win,
-                width as c_uint, height as c_uint,
-                XDefaultDepth(dpy, scr) as u32,
-            );
-            let draw = XftDrawCreate(dpy, buf, vis, cmap);
-
-            let cursor = XCreateFontCursor(dpy, XC_xterm);
-            XDefineCursor(dpy, win, cursor);
-
-            let s = CString::new("WM_DELETE_WINDOW").unwrap();
-            let wm_delete_window = XInternAtom(dpy, s.as_ptr(), False);
-            let s = CString::new("WM_PROTOCOLS").unwrap();
-            let wm_protocols = XInternAtom(dpy, s.as_ptr(), False);
-            let mut protocols = [wm_delete_window];
-            XSetWMProtocols(dpy, win, &mut protocols[0] as *mut _, 1);
-            
-            let s = CString::new("UTF8_STRING").unwrap();
-            let seltype = XInternAtom(dpy, s.as_ptr(), False);
-
-            XMapWindow(dpy, win);
-            XSync(dpy, False);
-
-            Ok(XWindow{
-                dpy,
-                win,
-                scr,
-                vis,
-
-                gc,
-                cmap,
-                colors,
-
-                font,
-                buf,
-                draw,
-
-                cw,
-                ch,
-                term: Term::new(cols, rows, fg, bg)?,
-
-                seltype: seltype,
-                seltext: None,
-                selsnap: SnapClick::new(),
-
-                mode: 0,
-                running: true,
-            })
+        let cmap = x11::XDefaultColormap(dpy, scr);
+        let mut colors = Vec::with_capacity(COLOR_NAMES.len());
+        for &name in COLOR_NAMES {
+            let color = x11::XftColorAllocName(dpy, vis, cmap, name);
+            colors.push(color);
         }
-    }
 
-    pub fn run(&mut self) -> Result<()> {
-        unsafe {
-            let mut event: XEvent = mem::zeroed();
-            while self.running {
-                XNextEvent(self.dpy, &mut event);
-                if XFilterEvent(&mut event, 0) == 1 {
-                    continue;
-                }
+        let depth = x11::XDefaultDepth(dpy, scr);
+        let attributes_mask = x11::CW_BACK_PIXEL
+            | x11::CW_COLOR_MAP
+            | x11::CW_EVENT_MASK;
+        let mut attributes: x11::XSetWindowAttributes = x11::zeroed();
+        attributes.colormap = cmap;
+        attributes.background_pixel = colors[bg_color()].pixel;
+        attributes.event_mask = x11::KEY_PRESS_MASK
+            | x11::VISIBILITY_CHANGE_MASK
+            | x11::STRUCTURE_NOTIFY_MASK
+            | x11::BUTTON_MOTION_MASK
+            | x11::BUTTON_PRESS_MASK
+            | x11::BUTTON_RELEASE_MASK;
 
-                match event.type_ {
-                    MapNotify => break,
-                    _ => (),
-                }
+        let win = x11::XCreateWindow(
+            dpy, root, 0, 0, width, height, 0, depth,
+            x11::INPUT_OUTPUT, vis, attributes_mask, &mut attributes,
+        );
+        x11::XStoreName(dpy, win, "rterm");
+
+        let mut gcvalues: x11::XGCValues = x11::zeroed();
+        gcvalues.graphics_exposures = x11::False;
+        let gc = x11::XCreateGC(dpy, root, x11::GC_GRAPHICS_EXPOSURES, &mut gcvalues);
+
+        let buf = x11::XCreatePixmap(dpy, win, width, height, depth);
+        let draw = x11::XftDrawCreate(dpy, buf, vis, cmap);
+
+        let cursor = x11::XCreateFontCursor(dpy, x11::XC_XTERM);
+        x11::XDefineCursor(dpy, win, cursor);
+
+        let wm_protocols = x11::XInternAtom(dpy, "WM_PROTOCOLS", x11::False);
+        let wm_delete_window = x11::XInternAtom(dpy, "WM_DELETE_WINDOW", x11::False);
+        let mut protocols = [wm_delete_window];
+        x11::XSetWMProtocols(dpy, win, &mut protocols);
+
+        let sel_type = x11::XInternAtom(dpy, "UTF8_STRING", x11::False);
+
+        x11::XMapWindow(dpy, win);
+        x11::XSync(dpy, x11::False);
+
+        loop {
+            let mut xev = x11::XNextEvent(dpy);
+            if x11::XFilterEvent(&mut xev, win) == x11::True {
+                continue;
             }
-
-            while self.running {
-                let xfd = XConnectionNumber(self.dpy);
-                let ptyfd = self.term.get_ptyfd();
-
-                let mut maxfd = 0;
-                let mut rfdset = sys::fdset_new();
-                sys::fdset_set(&mut rfdset, xfd, &mut maxfd);
-                sys::fdset_set(&mut rfdset, ptyfd, &mut maxfd);
-
-                sys::select(
-                    maxfd+1, Some(&mut rfdset), None, None, None
-                )?;
-
-                if sys::fdset_is_set(&mut rfdset, ptyfd) {
-                    self.term.ttyread()?;
-                }
-
-                while XPending(self.dpy) > 0 {
-                    XNextEvent(self.dpy, &mut event);
-                    if XFilterEvent(&mut event, 0) == 1 {
-                        continue;
-                    }
-
-                    // FIXME: function lookup table in rust
-                    match event.type_ {
-                        KeyPress => self.kpress(&mut event.key)?,
-                        ClientMessage => self.cmessage(&event.client_message)?,
-                        ConfigureNotify => self.resize(&event.configure)?,
-                        VisibilityNotify => self.visibility(&event.visibility)?,
-                        UnmapNotify => self.unmap(&event.unmap)?,
-                        Expose => self.expose(&event.expose)?,
-                        MotionNotify => self.bmotion(&event.motion)?,
-                        ButtonPress => self.bpress(&event.button)?,
-                        ButtonRelease => self.brelease(&event.button)?,
-                        SelectionNotify => self.selnotify(&event.selection)?,
-                        SelectionRequest => self.selrequest(&event.selection_request)?,
-                        _ => println!("event type {}", event.type_),
-                    }
-                }
-
-                self.draw();
+            if x11::event_type(&xev) == x11::MAP_NOTIFY {
+                break;
             }
         }
 
-        return Ok(())
+        Ok(Win {
+            visible: true,
+            focused: true,
+            mode: Mode::empty(),
+
+            sel_type: sel_type,
+            sel_snap: Snap::new(),
+            sel_text: None,
+
+            dpy,
+            win,
+            scr,
+
+            gc,
+            colors,
+            buf,
+            draw,
+            font,
+            cw,
+            ch,
+            ca,
+
+            wm_protocols,
+            wm_delete_window,
+        })
     }
 
-    fn xfinishdraw(&self) {
-        let (cols, rows) = self.term.size();
-        let width = (self.cw * cols) as c_uint;
-        let height = (self.ch * rows) as c_uint;
-        unsafe {
-            XCopyArea(
-                self.dpy, self.buf, self.win, self.gc,
-                0, 0, width, height,
-                0, 0
-            );
-            XFlush(self.dpy);
-        }
+    pub fn fd(&self) -> RawFd {
+        x11::XConnectionNumber(self.dpy)
     }
 
-    // FIXME: optimize by drawing blocks of the same attr
-    fn xdrawglyph(&self, g: &Glyph, winx: usize, winy: usize, reverse: bool) {
-        let (mut fg, mut bg) = (g.fg, g.bg);
-
-        if is_set(g.attr, ATTR_REVERSE) ^ reverse {
-            mem::swap(&mut fg, &mut bg);
-        }
-        if g.attr & ATTR_BOLD_FAINT == ATTR_BOLD && g.fg < 8 {
-            fg += 8;
-        }
-
-        let fg = &self.colors[fg as usize];
-        let bg = &self.colors[bg as usize];
-
-        unsafe {
-            XftDrawRect(
-                self.draw, bg, winx as c_int, winy as c_int,
-                self.cw as c_uint, self.ch as c_uint
-            );
-            let idx = XftCharIndex(self.dpy, self.font, g.u);
-            XftDrawGlyphs(
-                self.draw, fg, self.font,
-                winx as c_int, winy as c_int+(*self.font).ascent,
-                &idx, 1
-            );
-        }
+    pub fn bell(&self) {
     }
 
-    fn xdrawcursor(&mut self) {
-        let c = self.term.get_cursor();
-        let lines = self.term.get_lines();
-
-        let (ox, oy) = self.term.get_last_pos();
-        let reverse = self.term.selected(ox, oy);
-        let g = &lines[oy][ox];
-        self.xdrawglyph(g, ox*self.cw, oy*self.ch, reverse);
-
-        let mut g = lines[c.y][c.x];
-        let reverse = !self.term.selected(ox, oy);
-        self.xdrawglyph(&g, c.x*self.cw, c.y*self.ch, reverse);
-
-        self.term.sync_last_pos();
+    pub fn undraw_cursor(&mut self, term: &Term) {
+        let g = &term.lines[term.c.y][term.c.x];
+        let prop = g.prop.resolve(term.selected(term.c.x, term.c.y));
+        self.draw_cells(&[g.c], prop, term.c.x*self.cw, term.c.y*self.ch);
     }
 
-    fn xdrawline(&self, y: usize) {
-        let yp = y * self.ch;
-        let lines = self.term.get_lines();
-        let (cols, _) = self.term.size();
-
-        for x in 0..cols {
-            let xp = x * self.cw;
-            let g = &lines[y][x];
-            self.xdrawglyph(g, xp, yp, self.term.selected(x, y));
-        }
-    }
-
-    fn draw(&mut self) {
-        if !is_set(self.mode, MODE_VISIBLE) {
+    pub fn draw(&mut self, term: &mut Term) {
+        if !self.visible {
             return;
         }
 
-        let (_, rows) = self.term.size();
-        for y in 0..rows {
-            if !self.term.get_dirty(y) {
+        for y in 0..term.rows {
+            if !term.dirty[y] {
                 continue;
             }
-            self.xdrawline(y);
-            self.term.set_dirty(y, false);
+            self.draw_line(term, y);
+            term.dirty[y] = false;
         }
 
-        self.xdrawcursor();
-        self.xfinishdraw();
+        let c = term.lines[term.c.y][term.c.x].c;
+        let reverse = !term.selected(term.c.x, term.c.y);
+        let prop = term.c.glyph.prop.resolve(reverse);
+        self.draw_cells(&[c], prop, term.c.x*self.cw, term.c.y*self.ch);
+
+        self.finish_draw(term.cols, term.rows);
     }
 
-    fn cmessage(&mut self, event: &XClientMessageEvent) -> Result<()> {
-        unsafe {
-            let s = CString::new("WM_DELETE_WINDOW").unwrap();
-            let wm_delete_window = XInternAtom(self.dpy, s.as_ptr(), False);
-            let s = CString::new("WM_PROTOCOLS").unwrap();
-            let wm_protocols = XInternAtom(self.dpy, s.as_ptr(), False);
+    pub fn process_input(&mut self, term: &mut Term) {
+        while x11::XPending(self.dpy) > 0 {
+            let mut xev = x11::XNextEvent(self.dpy);
+            if x11::XFilterEvent(&mut xev, self.win) == x11::True {
+                continue;
+            }
 
-            if event.message_type == wm_protocols && event.format == 32 {
-                let protocol = event.data.get_long(0) as Atom;
-                if protocol == wm_delete_window {
-                    self.running = false;
-                    return Ok(());
+            let xev_type = x11::event_type(&xev);
+            match xev_type {
+                x11::KEY_PRESS =>
+                    self.key_press(xev, term),
+                x11::CLIENT_MESSAGE =>
+                    self.client_message(xev),
+                x11::CONFIGURE_NOTIFY =>
+                    self.configure_notify(xev, term),
+                x11::VISIBILITY_NOTIFY =>
+                    self.visibility_notify(xev),
+                x11::UNMAP_NOTIFY =>
+                    self.unmap_notify(xev),
+                x11::MOTION_NOTIFY =>
+                    self.motion_notify(xev, term),
+                x11::BUTTON_PRESS =>
+                    self.button_press(xev, term),
+                x11::BUTTON_RELEASE =>
+                    self.button_release(xev, term),
+                x11::SELECTION_NOTIFY =>
+                    self.selection_notify(xev, term),
+                x11::SELECTION_REQUEST =>
+                    self.selection_request(xev),
+                _ =>
+                    println!("event type {:?}", xev_type),
+            }
+        }
+    }
+
+    fn key_press(&mut self, xev: x11::XEvent, term: &mut Term) {
+        let mut xev = xev;
+        let xev: &mut x11::XKeyEvent = x11::cast_event_mut(&mut xev);
+        let mut buf = [0u8; 64];
+        let (ksym, mut len) = x11::XLookupString(xev, &mut buf);
+
+        if let Some(function) = find_shortcut(ksym, xev.state) {
+            function.execute(self, term);
+            return;
+        }
+
+        if let Some(key) = map_key(ksym, xev.state, &self.mode) {
+            self.term_write(term, &key);
+            return;
+        }
+
+        if len == 0 {
+            return;
+        }
+
+        if len == 1 && xev.state & x11::MOD1_MASK != 0 {
+            if self.mode.contains(Mode::EIGHTBIT) {
+                if buf[0] < 0x7F {
+                    buf[0] |= 0x80;
                 }
+            } else {
+                buf[1] = buf[0];
+                buf[0] = 0x1B;
+                len = 2;
             }
+        }
+        self.term_write(term, &buf[..len]);
+    }
 
-            return Err("invalid client message".into());
+    fn client_message(&mut self, xev: x11::XEvent) {
+        let xev: &x11::XClientMessageEvent = x11::cast_event(&xev);
+        if xev.message_type == self.wm_protocols && xev.format == 32 {
+            let protocol = xev.data.get_long(0) as x11::Atom;
+            if protocol == self.wm_delete_window {
+                app_exit();
+            }
         }
     }
 
-    fn kpress(&mut self, event: &mut XKeyEvent) -> Result<()> {
-        unsafe {
-            let mut ksym: u64 = 0;
-            let mut buf = [0u8; 4];
-            let len = XLookupString(
-                event, buf.as_mut_ptr() as *mut _, 4, &mut ksym, null_mut()
-            );
-
-            if ksym as u32 == XK_Insert && is_set(event.state, ShiftMask) {
-                return self.selpaste();
-            }
-
-            if let Some(customkey) = self.kmap(ksym as u32, event.state) {
-                self.term.ttywrite(customkey, true)?;
-                return Ok(());
-            }
-
-            if len <= 0 {
-                return Ok(());
-            }
-            let mut len = len as usize;
-
-            if len == 1 && event.state & Mod1Mask != 0 {
-                if is_set(self.mode, MODE_8BIT) {
-                    if buf[0] < 0o177 {
-                        let c = buf[0] | 0x80;
-                        len = utf8::encode(c as u32, &mut buf);
-                    }
-                } else {
-                    buf[1] = buf[0];
-                    buf[0] = 0o33;
-                    len = 2;
-                }
-            }
-            self.term.ttywrite(&buf[..len], true)?;
+    fn configure_notify(&mut self, xev: x11::XEvent, term: &mut Term) {
+        let xev: &x11::XConfigureEvent = x11::cast_event(&xev);
+        let cols = xev.width as usize / self.cw;
+        let rows = xev.height as usize / self.ch;
+        if term.resize(cols, rows) {
+            return;
         }
 
-        Ok(())
+        let width = term.cols * self.cw;
+        let height = term.rows * self.ch;
+        let depth = x11::XDefaultDepth(self.dpy, self.scr);
+        x11::XFreePixmap(self.dpy, self.buf);
+        self.buf = x11::XCreatePixmap(self.dpy, self.win, width, height, depth);
+        x11::XftDrawChange(self.draw, self.buf);
     }
 
-    fn resize(&mut self, event: &XConfigureEvent) -> Result<()> {
-        let cols = event.width as usize / self.cw;
-        let rows = event.height as usize / self.ch;
-
-        if !self.term.tresize(cols, rows) {
-            return Ok(());
-        }
-
-        let (cols, rows) = self.term.size();
-        let width = cols * self.cw;
-        let height = rows * self.ch;
-
-        unsafe {
-            XFreePixmap(self.dpy, self.buf);
-            self.buf = XCreatePixmap(
-                self.dpy, self.win,
-                width as u32, height as u32,
-                XDefaultDepth(self.dpy, self.scr) as u32,
-            );
-            XftDrawChange(self.draw, self.buf);
-        }
-
-        Ok(())
+    fn visibility_notify(&mut self, xev: x11::XEvent) {
+        let xev: &x11::XVisibilityEvent = x11::cast_event(&xev);
+        self.visible = xev.state != x11::VisibilityFullyObscured;
     }
 
-    fn visibility(&mut self, event: &XVisibilityEvent) -> Result<()> {
-        if event.state == VisibilityFullyObscured {
-            self.mode &= !MODE_VISIBLE;
-        } else {
-            self.mode |= MODE_VISIBLE;
-        }
-
-        Ok(())
-    }
-
-    fn unmap(&mut self, event: &XUnmapEvent) -> Result<()> {
-        self.mode &= !MODE_VISIBLE;
-        Ok(())
-    }
-
-    fn expose(&mut self, event: &XExposeEvent) -> Result<()> {
-        self.draw();
-        Ok(())
-    }
-
-    fn evpoint(&self, x: i32, y: i32) -> (i32, i32) {
-        (x / self.cw as i32, y /self.ch as i32)
+    fn unmap_notify(&mut self, _xev: x11::XEvent) {
+        self.visible = false;
     }
 
     // FIXME: select rectangle
-    fn bmotion(&mut self, event: &XMotionEvent) -> Result<()> {
-        let (x, y) = self.evpoint(event.x, event.y);
-        self.term.selextend(x, y);
-        Ok(())
+    fn motion_notify(&mut self, xev: x11::XEvent, term: &mut Term) {
+        let xev: &x11::XMotionEvent = x11::cast_event(&xev);
+        let (x, y) = self.term_point(xev.x, xev.y);
+        term.selection_extend(x, y);
     }
 
-    fn bpress(&mut self, event: &XButtonEvent) -> Result<()> {
-        if event.button == 1 {
-            let snap = self.selsnap.click();
-            let (x, y) = self.evpoint(event.x, event.y);
-            self.term.selstart(x, y, snap);
-        }
-        Ok(())
-    }
-
-    fn brelease(&mut self, event: &XButtonEvent) -> Result<()> {
-        match event.button {
-            2 => self.selpaste(),
-            1 => self.setsel(event.time),
-            _ => Ok(()),
+    fn button_press(&mut self, xev: x11::XEvent, term: &mut Term) {
+        let xev: &x11::XButtonEvent = x11::cast_event(&xev);
+        if xev.button == 1 {
+            let (x, y) = self.term_point(xev.x, xev.y);
+            term.selection_start(x, y, self.sel_snap.click());
         }
     }
 
-    fn selnotify(&mut self, event: &XSelectionEvent) -> Result<()> {
-        if event.property == 0 {
-            return Ok(())
+    fn button_release(&mut self, xev: x11::XEvent, term: &mut Term) {
+        let xev: &x11::XButtonEvent = x11::cast_event(&xev);
+        match xev.button {
+            2 => self.selection_paste(),
+            1 => self.selection_set(xev.time, term),
+            _ => (),
+        }
+    }
+
+    fn selection_notify(&mut self, xev: x11::XEvent, term: &mut Term) {
+        let xev: &x11::XSelectionEvent = x11::cast_event(&xev);
+        if xev.property == 0 {
+            return;
         }
 
         let mut ofs = 0;
@@ -512,24 +340,23 @@ impl XWindow {
         let mut data = null_mut();
 
         loop {
-            unsafe {
-                if XGetWindowProperty(
-                    self.dpy, self.win, event.property, ofs, 1024, 0, 0,
-                    &mut t, &mut format, &mut nitems, &mut rem, &mut data
-                ) != 0 {
-                    println!("XGetWindowProperty error");
-                    return Ok(());
-                }
+            if x11::XGetWindowProperty(
+                self.dpy, self.win, xev.property, ofs, 1024, 0, 0,
+                &mut t, &mut format, &mut nitems, &mut rem, &mut data
+            ) != 0 {
+                println!("XGetWindowProperty error");
+                return;
             }
 
-            if t != self.seltype {
+            if t != self.sel_type {
                 println!("returned type {}", t);
+                return;
             }
 
             let len = (nitems * (format as u64) / 8) as usize;
             let buf = unsafe { slice::from_raw_parts(data, len) };
-            self.term.ttywrite(buf, true);
-            unsafe { XFree(data as *mut _) };
+            self.term_write(term, buf);
+            x11::XFree(data as *mut _);
 
             if rem == 0 {
                 break;
@@ -537,135 +364,133 @@ impl XWindow {
                 ofs += (nitems * (format as u64) / 32) as i64;
             }
         }
-
-        Ok(())
     }
 
-    fn selrequest(&self, event: &XSelectionRequestEvent) -> Result<()> {
-        let text = self.seltext.as_ref().ok_or("seltext is none")?;
+    fn selection_request(&mut self, xev: x11::XEvent) {
+        let xev: &x11::XSelectionRequestEvent = x11::cast_event(&xev);
+        let text = self.sel_text.as_ref().ok_or("sel_text is none").unwrap();
 
-        unsafe {
-            let s = CString::new("TARGETS")?;
-            let targets = XInternAtom(self.dpy, s.as_ptr(), 0);
-            if event.target == targets {
-                XChangeProperty(
-                    event.display, event.requestor,
-                    event.property, XA_ATOM, 32, PropModeReplace,
-                    &self.seltype as *const _ as *const _, 1,
-                );
-            } else {
-                XChangeProperty(
-                    event.display, event.requestor,
-                    event.property, event.target, 8, PropModeReplace,
-                    text.as_ptr(), text.len() as i32,
-                );
-            }
-
-            let mut xev = XSelectionEvent {
-                type_: SelectionNotify,
-                serial: 0,
-                send_event: 0,
-                display: null_mut(),
-                requestor: event.requestor,
-                selection: event.selection,
-                target: event.target,
-                property: event.property,
-                time: event.time,
-            };
-
-            if XSendEvent(
-                event.display, event.requestor, 1, 0,
-                &mut xev as *mut _ as *mut _,
-            ) == 0 {
-                println!("XSendEvent error");
-            }
-        }
-
-        Ok(())
-    }
-
-    fn setsel(&mut self, time: Time) -> Result<()> {
-        self.seltext = self.term.getsel();
-
-        if self.seltext.is_some() {
-            unsafe {
-                let s = CString::new("CLIPBOARD")?;
-                let clipboard = XInternAtom(self.dpy, s.as_ptr(), 0);
-
-                XSetSelectionOwner(self.dpy, clipboard, self.win, time);
-                XSetSelectionOwner(self.dpy, XA_PRIMARY, self.win, time);
-                if (XGetSelectionOwner(self.dpy, clipboard) != self.win ||
-                    XGetSelectionOwner(self.dpy, XA_PRIMARY) != self.win) {
-                    self.term.selclear();
-                    return Ok(());
-                }
-
-
-            }
-        }
-
-        Ok(())
-    }
-
-    fn selpaste(&mut self) -> Result<()> {
-        unsafe {
-            XConvertSelection(
-                self.dpy, XA_PRIMARY, self.seltype,
-                XA_PRIMARY, self.win, CurrentTime,
+        let targets = x11::XInternAtom(self.dpy, "TARGETS", x11::False);
+        if xev.target == targets {
+            x11::XChangeProperty(
+                xev.display, xev.requestor, xev.property, x11::XA_ATOM,
+                32, x11::PROP_MODE_REPLACE,
+                &self.sel_type as *const _ as *const _, 1
+            );
+        } else {
+            x11::XChangeProperty(
+                xev.display, xev.requestor, xev.property, xev.target,
+                8, x11::PROP_MODE_REPLACE, text.as_ptr(), text.len()
             );
         }
-        Ok(())
+
+        let mut xev1 = x11::XSelectionEvent {
+            type_: x11::SELECTION_NOTIFY,
+            serial: 0,
+            send_event: 0,
+            display: null_mut(),
+            requestor: xev.requestor,
+            selection: xev.selection,
+            target: xev.target,
+            property: xev.property,
+            time: xev.time,
+        };
+
+        if x11::XSendEvent(
+            xev.display, xev.requestor, x11::True, 0,
+            &mut xev1 as *mut _ as *mut _
+        ) == 0 {
+            println!("XSendEvent error");
+        }
     }
 
-    pub fn kmap(&self, k: u32, state: c_uint) -> Option<&'static [u8]> {
-        if k & 0xFFFF < 0xFD00 {
-            return None;
+    fn draw_cells(&self, cs: &[char], prop: GlyphProp, xp: usize, yp: usize) {
+        let GlyphProp { mut fg, bg, attr } = prop;
+        if attr.contains(GlyphAttr::BOLD) && fg < 8 {
+            fg += 8;
         }
 
-        for key in keymap::keys {
-            if key.k != k {
-                continue;
-            }
-            if !keymap::match_mask(key.mask, state) {
-                continue;
-            }
+        let fg = &self.colors[fg];
+        let bg = &self.colors[bg];
 
-            if is_set(self.mode, MODE_APPKEYPAD) {
-                if key.appkey < 0 {
-                    continue;
-                }
-            } else {
-                if key.appkey > 0 {
-                    continue;
-                }
-            }
+        x11::XftDrawRect(self.draw, bg, xp, yp, cs.len()*self.cw, self.ch);
+        let idx = cs.iter()
+            .map(|&c| x11::XftCharIndex(self.dpy, self.font, c))
+            .collect::<Vec<u32>>();
+        x11::XftDrawGlyphs(self.draw, fg, self.font, xp, yp+self.ca, &idx);
+    }
 
-            if is_set(self.mode, MODE_NUMLOCK) && key.appkey == 2 {
-                continue;
-            }
+    fn draw_line(&mut self, term: &mut Term, y: usize) {
+        let yp = y * self.ch;
+        let mut x0 = 0;
+        let mut p0 = term.lines[y][0].prop.resolve(term.selected(0, y));
 
-            if is_set(self.mode, MODE_APPCURSOR) {
-                if key.appcursor < 0 {
-                    continue;
-                }
-            } else {
-                if key.appcursor > 0 {
-                    continue;
-                }
+        for x in x0+1..term.cols {
+            let p = term.lines[y][x].prop.resolve(term.selected(x, y));
+            if p0 != p {
+                let cs = term.lines[y][x0..x].iter()
+                    .map(|g| g.c)
+                    .collect::<Vec<char>>();
+                self.draw_cells(&cs, p0, x0*self.cw, yp);
+                x0 = x;
+                p0 = p;
             }
-
-            return Some(key.s);
         }
 
-        None
+        let cs = term.lines[y][x0..term.cols].iter()
+            .map(|g| g.c)
+            .collect::<Vec<char>>();
+        self.draw_cells(&cs, p0, x0*self.cw, yp);
+    }
+
+    fn finish_draw(&self, cols: usize, rows: usize) {
+        let width = self.cw * cols;
+        let height = self.ch * rows;
+        x11::XCopyArea(
+            self.dpy, self.buf, self.win, self.gc,
+            0, 0, width, height,
+            0, 0
+        );
+        x11::XFlush(self.dpy);
+    }
+
+    fn term_point(&self, xp: i32, yp: i32) -> (usize, usize) {
+        (xp as usize / self.cw, yp as usize / self.ch)
+    }
+
+    fn selection_set(&mut self, time: x11::Time, term: &mut Term) {
+        self.sel_text = term.selection_get_content();
+        if self.sel_text.is_none() {
+            return;
+        }
+
+        let clipboard = x11::XInternAtom(self.dpy, "CLIPBOARD", x11::False);
+        x11::XSetSelectionOwner(self.dpy, clipboard, self.win, time);
+        x11::XSetSelectionOwner(self.dpy, x11::XA_PRIMARY, self.win, time);
+        if x11::XGetSelectionOwner(self.dpy, clipboard) != self.win ||
+            x11::XGetSelectionOwner(self.dpy, x11::XA_PRIMARY) != self.win {
+            term.selection_clear();
+        }
+    }
+
+    pub fn selection_paste(&mut self) {
+        x11::XConvertSelection(
+            self.dpy, x11::XA_PRIMARY, self.sel_type,
+            x11::XA_PRIMARY, self.win, x11::CURRENT_TIME,
+        );
+    }
+
+    fn term_write(&mut self, term: &mut Term, buf: &[u8]) {
+        if self.mode.contains(Mode::ECHO) {
+            term.put_string(term_decode(buf));
+        }
+        term.pty.schedule_write(buf.to_vec());
     }
 }
 
-impl Drop for XWindow {
+impl Drop for Win {
     fn drop(&mut self) {
-        unsafe {
-            XDestroyWindow(self.dpy, self.win);
-            XCloseDisplay(self.dpy);
-        }
+        x11::XDestroyWindow(self.dpy, self.win);
+        x11::XCloseDisplay(self.dpy);
     }
 }

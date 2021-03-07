@@ -1,8 +1,4 @@
 #![allow(unused)]
-#![allow(non_camel_case_types)]
-#![allow(non_upper_case_globals)]
-
-// FIXME: error handling use error code
 
 #[derive(Debug)]
 pub struct Error {
@@ -15,23 +11,21 @@ impl<T: std::fmt::Display> std::convert::From<T> for Error {
     }
 }
 
-macro_rules! error {
-    ( $($args:tt)* ) => {
-        {
-            use $crate::Error;
-            Error{ msg: format!($($args)*) }
-        }
-    }
-}
-
 pub type Result<T> = std::result::Result<T, Error>;
 
-mod sys;
-mod esc;
-mod utf8;
+mod x11_wrapper;
+mod point;
+mod glyph;
 mod utils;
+mod shortcut;
 mod keymap;
 mod snap;
+mod shell;
+mod cursor;
+mod color;
+mod term;
+mod win;
+mod vte;
+mod pty;
 
-pub mod win;
-pub mod term;
+pub mod app;

@@ -1,12 +1,4 @@
 use std::cmp;
-use std::str::FromStr;
-use std::ops::{
-    Bound,
-    Range,
-    RangeBounds,
-};
-
-use crate::Result;
 
 #[inline]
 pub fn is_between<T: PartialOrd>(x: T, a: T, b: T) -> bool {
@@ -24,51 +16,37 @@ pub fn sort_pair<T: Ord>(a: T, b: T) -> (T, T) {
 }
 
 #[inline]
-pub fn is_set(a: u32, b: u32) -> bool {
-    a & b != 0
+pub fn is_control_c0(b: u8) -> bool {
+    is_between(b, 0, 0x1F) || b == 0x7F
 }
 
 #[inline]
-pub fn mod_flag(mode: &mut u32, set: bool, flag: u32) {
-    *mode = if set { *mode | flag } else { *mode & !flag }
+pub fn is_control_c1(b: u8) -> bool {
+    is_between(b, 0x80, 0x9F)
 }
 
 #[inline]
-pub fn assert_range<R: RangeBounds<usize>>(rb: &R) -> Range<usize>
-{
-    let start = match rb.start_bound() {
-        Bound::Included(&x) => x,
-        Bound::Excluded(&x) => x+1,
-        Bound::Unbounded => panic!("unbound range"),
-    };
-    let end = match rb.end_bound() {
-        Bound::Included(&x) => x+1,
-        Bound::Excluded(&x) => x,
-        Bound::Unbounded => panic!("unbound range"),
-    };
-    start..end
+pub fn is_control(b: u8) -> bool {
+    is_control_c0(b) || is_control_c1(b)
 }
 
-#[inline]
-pub fn is_control_c0(u: u8) -> bool {
-    is_between(u, 0, 0x1F) || u == 0x7F
-}
+pub fn term_decode(buf: &[u8]) -> String {
+    let mut string = String::new();
 
-#[inline]
-pub fn is_control_c1(u: u8) -> bool {
-    is_between(u, 0x80, 0x9F)
-}
-
-#[inline]
-pub fn is_control(u: u8) -> bool {
-    is_control_c0(u) || is_control_c1(u)
-}
-
-#[inline]
-pub fn atoi<T: FromStr>(buf: Vec<u8>) -> Result<T> {
-    let s = String::from_utf8(buf)?;
-    match s.parse::<T>() {
-        Ok(x) => Ok(x),
-        Err(_) => Err("".into()),
+    for &b in buf {
+        let mut b = b;
+        if is_control(b) {
+            if b & 0x80 != 0 {
+                b &= 0x7F;
+                string.push('^');
+                string.push('[');
+            } else if !b"\n\r\t".contains(&b) {
+                b ^= 0x40;
+                string.push('^');
+            }
+        }
+        string.push(b as char);
     }
+
+    string
 }

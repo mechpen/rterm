@@ -1,5 +1,4 @@
-## Copy/Paste
+rterm
+=====
 
-- Copy: Auto-copy with selection
-
-- Paste: Shift-Insert or Mouse button 2
+A port of [suckless terminal](https://st.suckless.org/) to rust.

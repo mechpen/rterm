@@ -1,14 +1,14 @@
-extern crate rt;
+extern crate rterm;
 
 use std::env;
-use rt::{
+use rterm::{
+    app::App,
     Result,
-    win,
 };
 
 fn usage() {
-    println!("usage: rt [-v] [-f font] [-g geometry] [-c class] [-n name]");
-    println!("          [-o file] [-t title] [[-e] command [args ...]]");
+    println!("usage: rterm [-v] [-f font] [-g geometry] [-c class] [-n name]");
+    println!("             [-o file] [-t title] [[-e] command [args ...]]");
 }
 
 fn _main() -> Result<()> {
@@ -23,7 +23,7 @@ fn _main() -> Result<()> {
         i += 1;
 
         if arg == "-v" {
-            println!("rt-{}", env!("CARGO_PKG_VERSION"));
+            println!("rterm-{}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         if arg == "-f" {
@@ -40,8 +40,8 @@ fn _main() -> Result<()> {
         }
     }
 
-    let mut win = win::XWindow::new(80, 24, 7, 0, font)?;
-    win.run()?;
+    let mut app = App::new(80, 24, font)?;
+    app.run()?;
 
     return Ok(());
 }

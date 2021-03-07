@@ -1,14 +1,16 @@
-use std::time;
+use std::time::{
+    Instant,
+    Duration,
+};
 
-const WORD_DELIMITERS: &[u8] = b" ()[]{}<>`~!@#$%^&*-=+\\|;:'\",.?/";
+const WORD_DELIMITERS: &str = " ()[]{}<>`~!@#$%^&*-=+\\|;:'\",.?/";
 
-pub fn is_delim(u: u32) -> bool {
-    WORD_DELIMITERS.contains(&(u as u8))
+pub fn is_delim(c: char) -> bool {
+    WORD_DELIMITERS.contains(c)
 }
 
-// FIXME: lazy static
-const DOUBLE_CLICK_TIMEOUT_MS: u128 = 300;
-const TRIPLE_CLICK_TIMEOUT_MS: u128 = 600;
+const DOUBLE_CLICK_TIMEOUT: Duration = Duration::from_millis(300);
+const TRIPLE_CLICK_TIMEOUT: Duration = Duration::from_millis(600);
 
 pub enum SnapMode {
     None,
@@ -16,32 +18,32 @@ pub enum SnapMode {
     Line,
 }
 
-pub struct SnapClick {
-    click1: time::Instant,
-    click2: time::Instant,
+pub struct Snap {
+    click1: Instant,
+    click2: Instant,
 }
 
-impl SnapClick {
+impl Snap {
     pub fn new() -> Self {
-        let now = time::Instant::now();
-        SnapClick {
+        let now = Instant::now();
+        Snap {
             click1: now,
             click2: now,
         }
     }
 
     pub fn click(&mut self) -> SnapMode {
-        let now = time::Instant::now();
-        let mut snap = SnapMode::None;
+        let now = Instant::now();
+        let mut mode = SnapMode::None;
 
-        if now.duration_since(self.click2).as_millis() < TRIPLE_CLICK_TIMEOUT_MS {
-            snap = SnapMode::Line;
-        } else if now.duration_since(self.click1).as_millis() < DOUBLE_CLICK_TIMEOUT_MS {
-            snap = SnapMode::Word;
+        if now.duration_since(self.click2) < TRIPLE_CLICK_TIMEOUT {
+            mode = SnapMode::Line;
+        } else if now.duration_since(self.click1) < DOUBLE_CLICK_TIMEOUT {
+            mode = SnapMode::Word;
         }
 
         self.click2 = self.click1;
         self.click1 = now;
-        snap
+        mode
     }
 }

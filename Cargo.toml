@@ -1,13 +1,20 @@
 [package]
-name = "rt"
+name = "rterm"
 version = "0.0.1"
 authors = ["Wenhua Zhao <whzhao@gmail.com>"]
 edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "A port of suckless terminal to rust."
+repository = "https://github.com/mechpen/rterm"
+keywords = ["st", "terminal"]
 
 [dependencies]
-libc = "0.2"
 x11 = "2.0"
+nix = "0.18"
+vte = "0.10"
+bitflags = "1.2"
+unicode-width = "0.1"
 
 [[bin]]
-name = "rt"
+name = "rterm"
 path = "src/bin/main.rs"

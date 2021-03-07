@@ -1,47 +1,40 @@
-extern crate x11;
-use x11::{
-    xlib::*,
-    keysym::*,
-};
-
+use x11::xlib::*;
+use x11::keysym::*;
 use std::os::raw::*;
+use crate::win::Mode;
 
 const XK_ANY_MOD:    u32 = u32::MAX;
 const XK_NO_MOD:     u32 = 0;
 const XK_SWITCH_MOD: u32 = 1<<13;
-const ignoremod:     u32 = Mod2Mask | XK_SWITCH_MOD;
+const IGNORE_MOD:    u32 = Mod2Mask | XK_SWITCH_MOD;
 
-pub fn match_mask(mask: u32, state: u32) -> bool {
-    mask == XK_ANY_MOD || mask == (state & !ignoremod)
-}
-
-pub struct Key {
-    pub k: c_uint,
-    pub mask: u32,
-    pub s: &'static [u8],
+struct Key {
+    k: c_uint,
+    mask: c_uint,
+    s: &'static [u8],
     /* three-valued logic variables: 0 indifferent, 1 on, -1 off */
-    pub appkey: c_char,    /* application keypad */
-    pub appcursor: c_char, /* application cursor */
+    appkeypad: c_char, /* application keypad */
+    appcursor: c_char, /* application cursor */
 }
 
 macro_rules! make_keys {
     {
-        $({ $k:expr, $mask:expr, $s:expr, $appkey:expr, $appcursor:expr },)*
+        $({ $k:expr, $mask:expr, $s:expr, $appkeypad:expr, $appcursor:expr },)*
     } => {
         &[
             $(Key {
                 k: $k,
                 mask: $mask,
                 s: $s,
-                appkey: $appkey,
+                appkeypad: $appkeypad,
                 appcursor: $appcursor,
             },)*
         ]
     }
 }
 
-pub const keys: &[Key] = make_keys!{
-    /* keysym           mask            string      appkey appcursor */
+const KEYS: &[Key] = make_keys!{
+    /* keysym           mask            string      appkeypad appcursor */
     { XK_KP_Home,       ShiftMask,      b"\x1B[2J",       0,   -1},
     { XK_KP_Home,       ShiftMask,      b"\x1B[1;2H",     0,    1},
     { XK_KP_Home,       XK_ANY_MOD,     b"\x1B[H",        0,   -1},
@@ -252,3 +245,51 @@ pub const keys: &[Key] = make_keys!{
     { XK_F34,           XK_NO_MOD,      b"\x1B[21;5~",    0,    0},
     { XK_F35,           XK_NO_MOD,      b"\x1B[23;5~",    0,    0},
 };
+
+pub fn map_key(k: KeySym, state: c_uint, mode: &Mode) -> Option<&'static [u8]> {
+    let k = k as c_uint;
+    if k & 0xFFFF < 0xFD00 {
+        return None;
+    }
+
+    let state = state & !IGNORE_MOD;
+    let numlock = mode.contains(Mode::NUMLOCK);
+    let appkeypad = mode.contains(Mode::APPKEYPAD);
+    let appcursor = mode.contains(Mode::APPCURSOR);
+
+    for key in KEYS {
+        if key.k != k {
+            continue;
+        }
+        if key.mask != XK_ANY_MOD && key.mask != state {
+            continue;
+        }
+        if numlock && key.appkeypad == 2 {
+            continue;
+        }
+
+        if appkeypad {
+            if key.appkeypad < 0 {
+                continue;
+            }
+        } else {
+            if key.appkeypad > 0 {
+                continue;
+            }
+        }
+
+        if appcursor {
+            if key.appcursor < 0 {
+                continue;
+            }
+        } else {
+            if key.appcursor > 0 {
+                continue;
+            }
+        }
+
+        return Some(key.s);
+    }
+
+    None
+}
