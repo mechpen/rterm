@@ -282,7 +282,7 @@ impl Term {
         }
 
         if self.c.wrap_next {
-            // for wide chars, c is not at cols-1
+            // for wide chars, cursor is not at cols-1
             self.lines[self.c.y][self.cols-1].prop.attr.insert(GlyphAttr::WRAP);
             self.new_line();
             self.c.x = 0;
@@ -305,8 +305,8 @@ impl Term {
         self.dirty[self.c.y] = true;
         self.lines[self.c.y][self.c.x].prop = self.c.glyph.prop;
         self.lines[self.c.y][self.c.x].c = c;
-        for x in self.c.x+1..width {
-            self.lines[self.c.y][x].prop.attr.set(GlyphAttr::DUMMY, true);
+        for x in self.c.x+1..self.c.x+width {
+            self.lines[self.c.y][x].prop.attr.insert(GlyphAttr::DUMMY);
         }
 
         self.c.x += width;
