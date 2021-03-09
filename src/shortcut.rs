@@ -25,7 +25,7 @@ struct Shortcut {
 
 macro_rules! make_shortcuts {
     {
-        $({ $mask:expr, $k:expr, $function:expr },)*
+        $({ $mask:expr, $k:expr, $function:path },)*
     } => {
         &[
             $(Shortcut {

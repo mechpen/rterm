@@ -60,11 +60,11 @@ pub struct Term {
     pub rows: usize,
     pub cols: usize,
     pub c: Cursor,
-    pub lines: Vec<Vec<Glyph>>,
     pub dirty: Vec<bool>,
     pub pty: Pty,
     pub scroll_top: usize,
     pub scroll_bot: usize,
+    lines: Vec<Vec<Glyph>>,
     tabs: Vec<bool>,
     mode: Mode,
     sel: Selection,
@@ -81,7 +81,7 @@ impl Term {
             pty: Pty::new()?,
             scroll_top: 0,
             scroll_bot: 0,
-            mode: Mode::empty(),
+            mode: Mode::WRAP,
             tabs: Vec::new(),
             sel: Selection::new(),
         };
@@ -134,6 +134,20 @@ impl Term {
         true
     }
 
+    pub fn get_glyph(&self, x: usize, y: usize) -> Glyph {
+        let mut g = self.lines[y][x];
+        g.prop = g.prop.resolve(self.is_selected(x, y));
+        g
+    }
+
+    pub fn get_cursor(&self, undraw: bool) -> (usize, usize, Glyph) {
+        let (x, y) = (self.c.x, self.c.y);
+        let mut g = self.lines[y][x];
+        let reverse = !undraw ^ self.is_selected(x, y);
+        g.prop = self.c.glyph.prop.resolve(reverse);
+        (x, y, g)
+    }
+
     pub fn reset(&mut self) {
         self.clear_lines(0..self.rows);
         for i in 0..self.cols {
@@ -167,8 +181,8 @@ impl Term {
             self.dirty[y] = true;
             for x in xrange.clone() {
                 self.lines[y][x] = blank_glyph();
-                if self.selected(x, y) {
-                    self.selection_clear();
+                if self.is_selected(x, y) {
+                    self.clear_selection();
                 }
             }
         }
@@ -178,11 +192,15 @@ impl Term {
         self.clear_region(0..self.cols, range)
     }
 
-    pub fn new_line(&mut self) {
+    pub fn new_line(&mut self, first_col: bool) {
         if self.c.y == self.scroll_bot {
             self.scroll_up(self.scroll_top, 1);
         } else {
             self.c.y += 1;
+        }
+
+        if first_col {
+            self.c.x = 0;
         }
     }
 
@@ -197,7 +215,7 @@ impl Term {
         self.set_dirty(orig+n..=self.scroll_bot);
         self.lines[orig..=self.scroll_bot].rotate_left(n);
 
-        self.selection_scroll(orig, -(n as i32));
+        self.scroll_selection(orig, -(n as i32));
     }
 
     pub fn scroll_down(&mut self, orig: usize, n: usize) {
@@ -211,7 +229,7 @@ impl Term {
         self.clear_lines(self.scroll_bot-n+1..=self.scroll_bot);
         self.lines[orig..=self.scroll_bot].rotate_right(n);
 
-        self.selection_scroll(orig, n as i32);
+        self.scroll_selection(orig, n as i32);
     }
 
     pub fn insert_lines(&mut self, n: usize) {
@@ -284,8 +302,7 @@ impl Term {
         if self.c.wrap_next {
             // for wide chars, cursor is not at cols-1
             self.lines[self.c.y][self.cols-1].prop.attr.insert(GlyphAttr::WRAP);
-            self.new_line();
-            self.c.x = 0;
+            self.new_line(true);
             self.c.wrap_next = false;
         }
 
@@ -294,12 +311,11 @@ impl Term {
         }
 
 	if self.c.x + width > self.cols {
-	    self.new_line();
-            self.c.x = 0;
+	    self.new_line(true);
 	}
 
-        if self.selected(self.c.x, self.c.y) {
-            self.selection_clear();
+        if self.is_selected(self.c.x, self.c.y) {
+            self.clear_selection();
         }
 
         self.dirty[self.c.y] = true;
@@ -339,9 +355,13 @@ impl Term {
         }
     }
 
-    pub fn selection_start(&mut self, x: usize, y: usize, mode: SnapMode) {
+    pub fn set_tab(&mut self, x: usize) {
+        self.tabs[x] = true;
+    }
+
+    pub fn start_selection(&mut self, x: usize, y: usize, mode: SnapMode) {
         // clear previous selection
-        self.selection_clear();
+        self.clear_selection();
         self.set_dirty(self.sel.nb.y ..= self.sel.ne.y);
 
         self.sel.mode = mode;
@@ -352,28 +372,28 @@ impl Term {
 
         match self.sel.mode {
             SnapMode::None => (),
-            _ => self.selection_normalize(),
+            _ => self.normalize_selection(),
         }
     }
 
-    pub fn selection_extend(&mut self, x: usize, y: usize) {
+    pub fn extend_selection(&mut self, x: usize, y: usize) {
         self.sel.oe.x = cmp::min(x, self.cols-1);
         self.sel.oe.y = cmp::min(y, self.rows-1);
-        self.selection_normalize();
+        self.normalize_selection();
     }
 
-    pub fn selected(&self, x: usize, y: usize) -> bool {
+    pub fn is_selected(&self, x: usize, y: usize) -> bool {
         !self.sel.empty &&
             is_between(y, self.sel.nb.y, self.sel.ne.y) &&
             (y != self.sel.nb.y || x >= self.sel.nb.x) &&
             (y != self.sel.ne.y || x <= self.sel.ne.x)
     }
 
-    pub fn selection_clear(&mut self) {
+    pub fn clear_selection(&mut self) {
         self.sel.empty = true;
     }
 
-    pub fn selection_get_content(&self) -> Option<String> {
+    pub fn get_selection_content(&self) -> Option<String> {
         if self.sel.empty {
             return None
         }
@@ -406,7 +426,7 @@ impl Term {
         Some(string)
     }
 
-    fn selection_normalize(&mut self) {
+    fn normalize_selection(&mut self) {
         let (mut nb, mut ne) = sort_pair(self.sel.ob, self.sel.oe);
 
         match self.sel.mode {
@@ -444,14 +464,14 @@ impl Term {
         self.sel.ne = ne;
     }
 
-    fn selection_scroll(&mut self, orig: usize, n: i32) {
+    fn scroll_selection(&mut self, orig: usize, n: i32) {
         if self.sel.empty {
             return;
         }
 
         if !is_between(self.sel.ob.y, orig, self.scroll_bot) ||
             !is_between(self.sel.ob.y, orig, self.scroll_bot) {
-            self.selection_clear();
+            self.clear_selection();
             return;
         }
 
@@ -459,13 +479,13 @@ impl Term {
         let ey = self.sel.oe.y as i32 + n;
         if !is_between(by, orig as i32, self.scroll_bot as i32) ||
             !is_between(ey, orig as i32, self.scroll_bot as i32) {
-            self.selection_clear();
+            self.clear_selection();
             return;
         }
 
         self.sel.ob.y = by as usize;
         self.sel.oe.y = ey as usize;
-        self.selection_normalize();
+        self.normalize_selection();
     }
 
     fn prev(&self, p: &Point) -> Option<Point> {

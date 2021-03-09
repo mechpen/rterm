@@ -6,7 +6,10 @@ use vte::{
 use std::iter;
 use crate::glyph::GlyphAttr;
 use crate::term::Term;
-use crate::win::Win;
+use crate::win::{
+    Win,
+    WinMode,
+};
 
 pub struct Vte {
     parser: Parser,
@@ -105,18 +108,55 @@ impl<'a> Perform for Performer<'a> {
             0x0D => // CR
                 term.move_to(0, term.c.y),
             0x0A | 0x0B | 0x0C => // LF VT FF
-                term.new_line(),
+                term.new_line(false),
             0x0E => // SO
-                (),
+                (), // FIXME
             0x0F => // SI
-                (),
-            _ =>
-                println!("unknown control {:02x}", byte),
+                (), // FIXME
+            _ => println!("unknown control {:02x}", byte),
         }
     }
 
     fn esc_dispatch(&mut self, intermediates: &[u8], _ignore: bool, byte: u8) {
-        println!("unknown esc {:?} {:?}", intermediates, byte as char);
+        let win = &mut *self.win;
+        let term = &mut *self.term;
+        let intermediate = intermediates.get(0);
+
+        match (byte, intermediate) {
+            (b'B', intermediate) =>
+                (),
+            (b'D', None) => // IND -- Linefeed
+                term.new_line(false),
+            (b'E', None) => // NEL -- Next line
+                term.new_line(true),
+            (b'H', None) => // HTS -- Horizontal tab stop
+                term.set_tab(term.c.x),
+            (b'M', None) => // RI -- Reverse index
+            {
+                if term.c.y == term.scroll_top {
+                    term.scroll_down(term.scroll_top, 1);
+                } else {
+                    term.move_to(term.c.x, term.c.y-1);
+                }
+            },
+            (b'Z', None) => // DECID -- Identify Terminal
+                term.pty.schedule_write(VTIDEN.to_vec()),
+            (b'c', None) => // RIS -- Reset to initial state
+                term.reset(), // FIXME: reset title and etc.
+            (b'0', intermediate) =>
+                (),
+            (b'7', None) => // DECSC -- Save Cursor
+                term.save_cursor(),
+            (b'8', None) => // DECRC -- Restore Cursor
+                term.load_cursor(),
+            (b'=', None) => // DECPAM -- Application keypad
+                win.set_mode(WinMode::APPKEYPAD),
+            (b'>', None) => // DECPNM -- Normal keypad
+                win.clear_mode(WinMode::APPKEYPAD),
+            (b'\\', None) => // ST -- String Terminator
+                (),
+            _ => println!("unknown esc {:?} {}", intermediate, byte as char),
+        }
     }
 
     fn csi_dispatch(
@@ -196,16 +236,17 @@ impl<'a> Perform for Performer<'a> {
                 term.put_tabs(arg0_or(1) as i32),
             ('J', None) => // ED -- Clear screen
             {
+                let y = term.c.y;
                 match arg0_or(0) {
                     0 => // below
                     {
-                        term.clear_region(term.c.x..term.cols, iter::once(term.c.y));
-                        term.clear_region(0..term.cols, term.c.y+1..term.rows);
+                        term.clear_region(term.c.x..term.cols, iter::once(y));
+                        term.clear_region(0..term.cols, y+1..term.rows);
                     },
                     1 => // above
                     {
-                        term.clear_region(0..term.cols, 0..term.c.y);
-                        term.clear_region(0..=term.c.x, iter::once(term.c.y));
+                        term.clear_region(0..term.cols, 0..y);
+                        term.clear_region(0..=term.c.x, iter::once(y));
                     },
                     2 => // all
                         term.clear_region(0..term.cols, 0..term.rows),
@@ -214,13 +255,14 @@ impl<'a> Perform for Performer<'a> {
             },
             ('K', None) => // EL erase line
             {
+                let y = term.c.y;
                 match arg0_or(0) {
                     0 => // right
-                        term.clear_region(term.c.x..term.cols, iter::once(term.c.y)),
+                        term.clear_region(term.c.x..term.cols, iter::once(y)),
                     1 => // left
-                        term.clear_region(0..term.c.x, iter::once(term.c.y)),
+                        term.clear_region(0..term.c.x, iter::once(y)),
                     2 => // all
-                        term.clear_region(0..term.cols, iter::once(term.c.y)),
+                        term.clear_region(0..term.cols, iter::once(y)),
                     x => println!("unknown EL {}", x),
                 }
             },
@@ -260,10 +302,9 @@ impl<'a> Perform for Performer<'a> {
                 ),
             ('Z', None) => // CBT -- Cursor Backward Tabulation <n> tab stops
                 term.put_tabs(-(arg0_or(1) as i32)),
-            _ =>
-                println!(
-                    "unknown csi {:?} {:?} {:?}", intermediates, params, action
-                ),
+            _ => println!(
+                "unknown csi {:?} {:?} {}", intermediates, params, action
+            ),
         }
     }
 }

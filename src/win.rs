@@ -21,7 +21,7 @@ use crate::x11_wrapper as x11;
 use crate::Result;
 
 bitflags! {
-    pub struct Mode: u32 {
+    pub struct WinMode: u32 {
         const APPKEYPAD   = 1 << 2;
         const MOUSEBTN    = 1 << 3;
         const MOUSEMOTION = 1 << 4;
@@ -45,7 +45,7 @@ bitflags! {
 pub struct Win {
     visible: bool,
     focused: bool,
-    mode: Mode,
+    mode: WinMode,
 
     dpy: x11::Display,
     win: x11::Window,
@@ -140,7 +140,7 @@ impl Win {
         Ok(Win {
             visible: true,
             focused: true,
-            mode: Mode::empty(),
+            mode: WinMode::empty(),
 
             sel_type: sel_type,
             sel_snap: Snap::new(),
@@ -171,10 +171,17 @@ impl Win {
     pub fn bell(&self) {
     }
 
+    pub fn set_mode(&mut self, mode: WinMode) {
+        self.mode.insert(mode);
+    }
+
+    pub fn clear_mode(&mut self, mode: WinMode) {
+        self.mode.remove(mode);
+    }
+
     pub fn undraw_cursor(&mut self, term: &Term) {
-        let g = &term.lines[term.c.y][term.c.x];
-        let prop = g.prop.resolve(term.selected(term.c.x, term.c.y));
-        self.draw_cells(&[g.c], prop, term.c.x*self.cw, term.c.y*self.ch);
+        let (x, y, g) = term.get_cursor(true);
+        self.draw_cells(&[g.c], g.prop, x*self.cw, y*self.ch);
     }
 
     pub fn draw(&mut self, term: &mut Term) {
@@ -190,10 +197,8 @@ impl Win {
             term.dirty[y] = false;
         }
 
-        let c = term.lines[term.c.y][term.c.x].c;
-        let reverse = !term.selected(term.c.x, term.c.y);
-        let prop = term.c.glyph.prop.resolve(reverse);
-        self.draw_cells(&[c], prop, term.c.x*self.cw, term.c.y*self.ch);
+        let (x, y, g) = term.get_cursor(false);
+        self.draw_cells(&[g.c], g.prop, x*self.cw, y*self.ch);
 
         self.finish_draw(term.cols, term.rows);
     }
@@ -254,7 +259,7 @@ impl Win {
         }
 
         if len == 1 && xev.state & x11::MOD1_MASK != 0 {
-            if self.mode.contains(Mode::EIGHTBIT) {
+            if self.mode.contains(WinMode::EIGHTBIT) {
                 if buf[0] < 0x7F {
                     buf[0] |= 0x80;
                 }
@@ -281,7 +286,7 @@ impl Win {
         let xev: &x11::XConfigureEvent = x11::cast_event(&xev);
         let cols = xev.width as usize / self.cw;
         let rows = xev.height as usize / self.ch;
-        if term.resize(cols, rows) {
+        if !term.resize(cols, rows) {
             return;
         }
 
@@ -306,14 +311,14 @@ impl Win {
     fn motion_notify(&mut self, xev: x11::XEvent, term: &mut Term) {
         let xev: &x11::XMotionEvent = x11::cast_event(&xev);
         let (x, y) = self.term_point(xev.x, xev.y);
-        term.selection_extend(x, y);
+        term.extend_selection(x, y);
     }
 
     fn button_press(&mut self, xev: x11::XEvent, term: &mut Term) {
         let xev: &x11::XButtonEvent = x11::cast_event(&xev);
         if xev.button == 1 {
             let (x, y) = self.term_point(xev.x, xev.y);
-            term.selection_start(x, y, self.sel_snap.click());
+            term.start_selection(x, y, self.sel_snap.click());
         }
     }
 
@@ -423,24 +428,21 @@ impl Win {
     fn draw_line(&mut self, term: &mut Term, y: usize) {
         let yp = y * self.ch;
         let mut x0 = 0;
-        let mut p0 = term.lines[y][0].prop.resolve(term.selected(0, y));
+        let mut g0 = term.get_glyph(x0, y);
+        let mut cs = vec![g0.c];
 
         for x in x0+1..term.cols {
-            let p = term.lines[y][x].prop.resolve(term.selected(x, y));
-            if p0 != p {
-                let cs = term.lines[y][x0..x].iter()
-                    .map(|g| g.c)
-                    .collect::<Vec<char>>();
-                self.draw_cells(&cs, p0, x0*self.cw, yp);
+            let g = term.get_glyph(x, y);
+            if g0.prop == g.prop {
+                cs.push(g.c);
+            } else {
+                self.draw_cells(&cs, g0.prop, x0*self.cw, yp);
                 x0 = x;
-                p0 = p;
+                g0 = g;
+                cs = vec![g0.c];
             }
         }
-
-        let cs = term.lines[y][x0..term.cols].iter()
-            .map(|g| g.c)
-            .collect::<Vec<char>>();
-        self.draw_cells(&cs, p0, x0*self.cw, yp);
+        self.draw_cells(&cs, g0.prop, x0*self.cw, yp);
     }
 
     fn finish_draw(&self, cols: usize, rows: usize) {
@@ -459,7 +461,7 @@ impl Win {
     }
 
     fn selection_set(&mut self, time: x11::Time, term: &mut Term) {
-        self.sel_text = term.selection_get_content();
+        self.sel_text = term.get_selection_content();
         if self.sel_text.is_none() {
             return;
         }
@@ -469,7 +471,7 @@ impl Win {
         x11::XSetSelectionOwner(self.dpy, x11::XA_PRIMARY, self.win, time);
         if x11::XGetSelectionOwner(self.dpy, clipboard) != self.win ||
             x11::XGetSelectionOwner(self.dpy, x11::XA_PRIMARY) != self.win {
-            term.selection_clear();
+            term.clear_selection();
         }
     }
 
@@ -481,7 +483,7 @@ impl Win {
     }
 
     fn term_write(&mut self, term: &mut Term, buf: &[u8]) {
-        if self.mode.contains(Mode::ECHO) {
+        if self.mode.contains(WinMode::ECHO) {
             term.put_string(term_decode(buf));
         }
         term.pty.schedule_write(buf.to_vec());

@@ -1,7 +1,7 @@
 use x11::xlib::*;
 use x11::keysym::*;
 use std::os::raw::*;
-use crate::win::Mode;
+use crate::win::WinMode;
 
 const XK_ANY_MOD:    u32 = u32::MAX;
 const XK_NO_MOD:     u32 = 0;
@@ -246,16 +246,18 @@ const KEYS: &[Key] = make_keys!{
     { XK_F35,           XK_NO_MOD,      b"\x1B[23;5~",    0,    0},
 };
 
-pub fn map_key(k: KeySym, state: c_uint, mode: &Mode) -> Option<&'static [u8]> {
+pub fn map_key(
+    k: KeySym, state: c_uint, mode: &WinMode
+) -> Option<&'static [u8]> {
     let k = k as c_uint;
     if k & 0xFFFF < 0xFD00 {
         return None;
     }
 
     let state = state & !IGNORE_MOD;
-    let numlock = mode.contains(Mode::NUMLOCK);
-    let appkeypad = mode.contains(Mode::APPKEYPAD);
-    let appcursor = mode.contains(Mode::APPCURSOR);
+    let numlock = mode.contains(WinMode::NUMLOCK);
+    let appkeypad = mode.contains(WinMode::APPKEYPAD);
+    let appcursor = mode.contains(WinMode::APPCURSOR);
 
     for key in KEYS {
         if key.k != k {
