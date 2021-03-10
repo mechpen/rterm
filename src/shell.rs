@@ -8,12 +8,10 @@ use nix::sys::signal::{
     SigHandler,
 };
 use nix::unistd::execvp;
-
 use std::env;
 use std::process::exit;
 use std::ffi::CString;
 use std::os::unix::ffi::OsStringExt;
-
 use crate::Result;
 
 fn _exec_shell() -> Result<()> {
@@ -32,13 +30,13 @@ fn _exec_shell() -> Result<()> {
     env::set_var("TERM",    "st-256color");
 
     unsafe {
-        signal(Signal::SIGCHLD, SigHandler::SigDfl).unwrap();
-        signal(Signal::SIGCHLD, SigHandler::SigDfl).unwrap();
-        signal(Signal::SIGHUP,  SigHandler::SigDfl).unwrap();
-        signal(Signal::SIGINT,  SigHandler::SigDfl).unwrap();
-        signal(Signal::SIGQUIT, SigHandler::SigDfl).unwrap();
-        signal(Signal::SIGTERM, SigHandler::SigDfl).unwrap();
-        signal(Signal::SIGALRM, SigHandler::SigDfl).unwrap();
+        signal(Signal::SIGCHLD, SigHandler::SigDfl)?;
+        signal(Signal::SIGCHLD, SigHandler::SigDfl)?;
+        signal(Signal::SIGHUP,  SigHandler::SigDfl)?;
+        signal(Signal::SIGINT,  SigHandler::SigDfl)?;
+        signal(Signal::SIGQUIT, SigHandler::SigDfl)?;
+        signal(Signal::SIGTERM, SigHandler::SigDfl)?;
+        signal(Signal::SIGALRM, SigHandler::SigDfl)?;
     }
 
     let shell = CString::new(shell.into_vec())?;

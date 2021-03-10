@@ -140,7 +140,7 @@ impl<'a> Perform for Performer<'a> {
                 }
             },
             (b'Z', None) => // DECID -- Identify Terminal
-                term.pty.schedule_write(VTIDEN.to_vec()),
+                term.pty.write(VTIDEN.to_vec()),
             (b'c', None) => // RIS -- Reset to initial state
                 term.reset(), // FIXME: reset title and etc.
             (b'0', intermediate) =>
@@ -205,7 +205,7 @@ impl<'a> Perform for Performer<'a> {
             ('a', None) => // HPR -- Cursor <n> Forward
                 term.move_to(term.c.x+arg0_or(1), term.c.y),
             ('c', _) if arg0_or(0) == 0 => // DA -- Device Attributes
-                term.pty.schedule_write(VTIDEN.to_vec()),
+                term.pty.write(VTIDEN.to_vec()),
             ('D', None) => // CUB -- Cursor <n> Backward
                 term.move_to(term.c.x.saturating_sub(arg0_or(1)), term.c.y),
             ('d', None) => // VPA -- Move to <row>
@@ -277,7 +277,7 @@ impl<'a> Perform for Performer<'a> {
             ('n', None) if arg0_or(0) == 6 => // DSR Device Status Report
             {
                 let s = format!("\x1B[{};{}R", term.c.y+1, term.c.x+1);
-                term.pty.schedule_write(s.as_bytes().to_vec());
+                term.pty.write(s.as_bytes().to_vec());
             }
             ('P', None) => // DCH -- Delete <n> char
                 term.delete_chars(arg0_or(1)),

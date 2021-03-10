@@ -67,11 +67,11 @@ impl Pty {
         Ok(read(self.master_fd, buf)?)
     }
 
-    pub fn write_pending(&self) -> bool {
+    pub fn need_flush(&self) -> bool {
         !self.write_buf.is_empty()
     }
 
-    pub fn do_write(&mut self) -> Result<()> {
+    pub fn flush(&mut self) -> Result<()> {
         while let Some(buf) = self.write_buf.pop_front() {
             let n = write(self.master_fd, &buf)?;
             if n == buf.len() {
@@ -82,7 +82,7 @@ impl Pty {
         Ok(())
     }
 
-    pub fn schedule_write(&mut self, buf: Vec<u8>) {
+    pub fn write(&mut self, buf: Vec<u8>) {
         self.write_buf.push_back(buf);
     }
 }

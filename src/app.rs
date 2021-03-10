@@ -38,11 +38,11 @@ fn set_sigchld() {
 
 // Data flow:
 //
-//   read pty master fd --> (parse events) --+--> update pty (write to fd)
-//                                           |
-//                                           +--> update term
-//                                           |
-//                 win input ----------------+--> update win
+//   read pty fd --> vte parse --+--> write to pty fd
+//                               |
+//                               +--> update term
+//                               |
+//        win input -------------+--> update win
 
 pub struct App {
     term: Term,
@@ -73,7 +73,7 @@ impl App {
             rfds.insert(win_fd);
 
             let mut wfds = FdSet::new();
-            if self.term.pty.write_pending() {
+            if self.term.pty.need_flush() {
                 wfds.insert(pty_fd);
             }
 
@@ -84,7 +84,7 @@ impl App {
             }
 
             if wfds.contains(pty_fd) {
-                self.term.pty.do_write()?;
+                self.term.pty.flush()?;
             }
 
             self.win.undraw_cursor(&self.term);

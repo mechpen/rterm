@@ -180,7 +180,8 @@ impl Win {
     }
 
     pub fn undraw_cursor(&mut self, term: &Term) {
-        let (x, y, g) = term.get_cursor(true);
+        let (x, y) = (term.c.x, term.c.y);
+        let g = term.get_glyph(x, y);
         self.draw_cells(&[g.c], g.prop, x*self.cw, y*self.ch);
     }
 
@@ -197,7 +198,7 @@ impl Win {
             term.dirty[y] = false;
         }
 
-        let (x, y, g) = term.get_cursor(false);
+        let (x, y, g) = term.get_glyph_at_cursor();
         self.draw_cells(&[g.c], g.prop, x*self.cw, y*self.ch);
 
         self.finish_draw(term.cols, term.rows);
@@ -212,28 +213,17 @@ impl Win {
 
             let xev_type = x11::event_type(&xev);
             match xev_type {
-                x11::KEY_PRESS =>
-                    self.key_press(xev, term),
-                x11::CLIENT_MESSAGE =>
-                    self.client_message(xev),
-                x11::CONFIGURE_NOTIFY =>
-                    self.configure_notify(xev, term),
-                x11::VISIBILITY_NOTIFY =>
-                    self.visibility_notify(xev),
-                x11::UNMAP_NOTIFY =>
-                    self.unmap_notify(xev),
-                x11::MOTION_NOTIFY =>
-                    self.motion_notify(xev, term),
-                x11::BUTTON_PRESS =>
-                    self.button_press(xev, term),
-                x11::BUTTON_RELEASE =>
-                    self.button_release(xev, term),
-                x11::SELECTION_NOTIFY =>
-                    self.selection_notify(xev, term),
-                x11::SELECTION_REQUEST =>
-                    self.selection_request(xev),
-                _ =>
-                    println!("event type {:?}", xev_type),
+                x11::KEY_PRESS => self.key_press(xev, term),
+                x11::CLIENT_MESSAGE => self.client_message(xev),
+                x11::CONFIGURE_NOTIFY => self.configure_notify(xev, term),
+                x11::VISIBILITY_NOTIFY => self.visibility_notify(xev),
+                x11::UNMAP_NOTIFY => self.unmap_notify(xev),
+                x11::MOTION_NOTIFY => self.motion_notify(xev, term),
+                x11::BUTTON_PRESS => self.button_press(xev, term),
+                x11::BUTTON_RELEASE => self.button_release(xev, term),
+                x11::SELECTION_NOTIFY => self.selection_notify(xev, term),
+                x11::SELECTION_REQUEST => self.selection_request(xev),
+                _ => println!("event type {:?}", xev_type),
             }
         }
     }
@@ -486,7 +476,7 @@ impl Win {
         if self.mode.contains(WinMode::ECHO) {
             term.put_string(term_decode(buf));
         }
-        term.pty.schedule_write(buf.to_vec());
+        term.pty.write(buf.to_vec());
     }
 }
 

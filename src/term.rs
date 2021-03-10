@@ -140,10 +140,10 @@ impl Term {
         g
     }
 
-    pub fn get_cursor(&self, undraw: bool) -> (usize, usize, Glyph) {
+    pub fn get_glyph_at_cursor(&self) -> (usize, usize, Glyph) {
         let (x, y) = (self.c.x, self.c.y);
         let mut g = self.lines[y][x];
-        let reverse = !undraw ^ self.is_selected(x, y);
+        let reverse = !self.is_selected(x, y);
         g.prop = self.c.glyph.prop.resolve(reverse);
         (x, y, g)
     }
