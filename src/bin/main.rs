@@ -7,15 +7,16 @@ use rterm::{
 };
 
 fn usage() {
-    println!("usage: rterm [-v] [-f font] [-g geometry] [-c class] [-n name]");
-    println!("             [-o file] [-t title] [[-e] command [args ...]]");
+    println!("usage: rterm [-v] [-g geometry] [-f font] [-o file]");
 }
 
 fn _main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
 
+    let mut geometry: Option<&str> = None;
     let mut font: Option<&str> = None;
+    let mut log: Option<&str> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -26,13 +27,20 @@ fn _main() -> Result<()> {
             println!("rterm-{}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
+        if arg == "-g" {
+            geometry = Some(args[i]);
+            i += 1;
+            continue;
+        }
         if arg == "-f" {
             font = Some(args[i]);
             i += 1;
             continue;
         }
-        if arg == "-e" {
-            break
+        if arg == "-o" {
+            log = Some(args[i]);
+            i += 1;
+            continue;
         }
         if arg.starts_with("-") {
             usage();
@@ -40,7 +48,7 @@ fn _main() -> Result<()> {
         }
     }
 
-    let mut app = App::new(80, 24, font)?;
+    let mut app = App::new(geometry, font, log)?;
     app.run()?;
 
     return Ok(());

@@ -1,4 +1,5 @@
 use std::cmp;
+use crate::Result;
 
 #[inline]
 pub fn is_between<T: PartialOrd>(x: T, a: T, b: T) -> bool {
@@ -49,4 +50,15 @@ pub fn term_decode(buf: &[u8]) -> String {
     }
 
     string
+}
+
+pub fn parse_geometry(s: &str) -> Result<(usize, usize)> {
+    let fields = s.split('x').collect::<Vec<&str>>();
+    if fields.len() != 2 {
+        return Err("invalid geometry".into());
+    }
+
+    let cols = fields[0].parse::<usize>()?;
+    let rows = fields[1].parse::<usize>()?;
+    Ok((cols, rows))
 }
