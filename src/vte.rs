@@ -5,10 +5,17 @@ use vte::{
 };
 use std::iter;
 use crate::glyph::GlyphAttr;
-use crate::term::Term;
+use crate::charset::{
+    CharsetIndex,
+    Charset,
+};
+use crate::term::{
+    TermMode,
+    Term,
+};
 use crate::win::{
-    Win,
     WinMode,
+    Win,
 };
 
 pub struct Vte {
@@ -82,7 +89,60 @@ impl<'a> Performer<'a> {
                 49 => prop.reset_bg(),
                 90..=97 => prop.fg = (param[0] - 90 + 8) as usize,
                 100..=107 => prop.bg = (param[0] - 100 + 8) as usize,
-                _ => println!("tsetattr unknown attr {}", param[0]),
+                _ => println!("unknown glyph attr {}", param[0]),
+            }
+        }
+    }
+
+    fn set_mode(
+        &mut self, intermediate: Option<&u8>, params: &Params, val: bool
+    ) {
+        let private = match intermediate {
+            Some(b'?') => true,
+            None => false,
+            _ => return,
+        };
+
+        if private {
+            for param in params.iter() {
+                match param[0] {
+                    1 => // DECCKM -- Cursor key
+                        self.win.set_mode(WinMode::APPCURSOR, val),
+                    5 => // DECSCNM -- Reverse video
+                        self.win.set_mode(WinMode::REVERSE, val),
+                    6 => // DECOM -- Origin
+                    {
+                        self.term.set_mode(TermMode::ORIGIN, val);
+                        self.term.move_ato(0, 0);
+                    },
+                    7 => // DECAWM -- Auto wrap
+                        self.term.set_mode(TermMode::WRAP, val),
+                    25 => // DECTCEM -- Text Cursor Enable Mode
+                        self.win.set_mode(WinMode::HIDE, !val),
+                    1034 =>
+                        self.win.set_mode(WinMode::EIGHT_BIT, val),
+                    1048 =>
+                    {
+                        if val {
+                            self.term.save_cursor();
+                        } else {
+                            self.term.load_cursor();
+                        }
+                    },
+                    _ => (),
+                }
+            }
+        } else {
+            for param in params.iter() {
+                match param[0] {
+                    4 => // IRM -- Insertion-replacement
+                        self.term.set_mode(TermMode::INSERT, val),
+                    12 => // SRM -- Send/Receive
+                        self.win.set_mode(WinMode::ECHO, !val),
+                    20 => // LNM -- Linefeed/new line
+                        self.term.set_mode(TermMode::CRLF, val),
+                    _ => (),
+                }
             }
         }
     }
@@ -90,6 +150,7 @@ impl<'a> Performer<'a> {
 
 impl<'a> Perform for Performer<'a> {
     fn print(&mut self, c: char) {
+        let c = self.term.charset.map(c);
         self.term.put_char(c);
         self.last_c = Some(c);
     }
@@ -110,9 +171,9 @@ impl<'a> Perform for Performer<'a> {
             0x0A | 0x0B | 0x0C => // LF VT FF
                 term.new_line(false),
             0x0E => // SO
-                (), // FIXME
+                term.charset.set_current(CharsetIndex::G1),
             0x0F => // SI
-                (), // FIXME
+                term.charset.set_current(CharsetIndex::G0),
             _ => println!("unknown control {:02x}", byte),
         }
     }
@@ -123,8 +184,14 @@ impl<'a> Perform for Performer<'a> {
         let intermediate = intermediates.get(0);
 
         match (byte, intermediate) {
-            (b'B', intermediate) =>
-                (),
+            (b'B', Some(b'(')) =>
+                term.charset.setup(CharsetIndex::G0, Charset::Ascii),
+            (b'B', Some(b')')) =>
+                term.charset.setup(CharsetIndex::G1, Charset::Ascii),
+            (b'B', Some(b'*')) =>
+                term.charset.setup(CharsetIndex::G2, Charset::Ascii),
+            (b'B', Some(b'+')) =>
+                term.charset.setup(CharsetIndex::G3, Charset::Ascii),
             (b'D', None) => // IND -- Linefeed
                 term.new_line(false),
             (b'E', None) => // NEL -- Next line
@@ -143,16 +210,22 @@ impl<'a> Perform for Performer<'a> {
                 term.pty.write(VTIDEN.to_vec()),
             (b'c', None) => // RIS -- Reset to initial state
                 term.reset(), // FIXME: reset title and etc.
-            (b'0', intermediate) =>
-                (),
+            (b'0', Some(b'(')) =>
+                term.charset.setup(CharsetIndex::G0, Charset::Graphic0),
+            (b'0', Some(b')')) =>
+                term.charset.setup(CharsetIndex::G1, Charset::Graphic0),
+            (b'0', Some(b'*')) =>
+                term.charset.setup(CharsetIndex::G2, Charset::Graphic0),
+            (b'0', Some(b'+')) =>
+                term.charset.setup(CharsetIndex::G3, Charset::Graphic0),
             (b'7', None) => // DECSC -- Save Cursor
                 term.save_cursor(),
             (b'8', None) => // DECRC -- Restore Cursor
                 term.load_cursor(),
             (b'=', None) => // DECPAM -- Application keypad
-                win.set_mode(WinMode::APPKEYPAD),
+                win.set_mode(WinMode::APPKEYPAD, true),
             (b'>', None) => // DECPNM -- Normal keypad
-                win.clear_mode(WinMode::APPKEYPAD),
+                win.set_mode(WinMode::APPKEYPAD, false),
             (b'\\', None) => // ST -- String Terminator
                 (),
             _ => println!("unknown esc {:?} {}", intermediate, byte as char),
@@ -166,7 +239,6 @@ impl<'a> Perform for Performer<'a> {
         has_ignored_intermediates: bool,
         action: char,
     ) {
-        let win = &mut *self.win;
         let term = &mut *self.term;
 
         if has_ignored_intermediates || intermediates.len() > 1 {
@@ -209,7 +281,7 @@ impl<'a> Perform for Performer<'a> {
             ('D', None) => // CUB -- Cursor <n> Backward
                 term.move_to(term.c.x.saturating_sub(arg0_or(1)), term.c.y),
             ('d', None) => // VPA -- Move to <row>
-                term.move_to(term.c.x, arg0_or(1)-1),
+                term.move_ato(term.c.x, arg0_or(1)-1),
             ('E', None) => // CNL -- Cursor <n> Down and first col
                 term.move_to(0, term.c.y+arg0_or(1)),
             ('F', None) => // CPL -- Cursor <n> Up and first col
@@ -229,9 +301,9 @@ impl<'a> Perform for Performer<'a> {
             },
             ('H', None) |  // CUP -- Move to <row> <col>
             ('f', None) => // HVP
-                term.move_to(arg1_or(1)-1, arg0_or(1)-1),
+                term.move_ato(arg1_or(1)-1, arg0_or(1)-1),
             ('h', intermediate) => // SM -- Set terminal mode
-                (),// FIXME
+                self.set_mode(intermediate, params, true),
             ('I', None) => // CHT -- Cursor Forward Tabulation <n> tab stops
                 term.put_tabs(arg0_or(1) as i32),
             ('J', None) => // ED -- Clear screen
@@ -260,7 +332,7 @@ impl<'a> Perform for Performer<'a> {
                     0 => // right
                         term.clear_region(term.c.x..term.cols, iter::once(y)),
                     1 => // left
-                        term.clear_region(0..term.c.x, iter::once(y)),
+                        term.clear_region(0..=term.c.x, iter::once(y)),
                     2 => // all
                         term.clear_region(0..term.cols, iter::once(y)),
                     x => println!("unknown EL {}", x),
@@ -269,7 +341,7 @@ impl<'a> Perform for Performer<'a> {
             ('L', None) => // IL -- Insert <n> blank lines
                 term.insert_lines(arg0_or(1)),
             ('l', intermediate) => // RM -- Reset Mode
-                (), // FIXME
+                self.set_mode(intermediate, params, false),
             ('M', None) => // DL -- Delete <n> lines
                 term.delete_lines(arg0_or(1)),
             ('m', None) => // SGR -- Terminal attribute (color)
@@ -286,7 +358,7 @@ impl<'a> Perform for Performer<'a> {
                 let top = arg0_or(1) - 1;
                 let bot = arg1_or(term.rows) - 1;
                 term.set_scroll(top, bot);
-                term.move_to(0, top);
+                term.move_ato(0, 0);
             },
             ('S', None) => // SU -- Scroll <n> line up
                 term.scroll_up(term.scroll_top, arg0_or(1)),

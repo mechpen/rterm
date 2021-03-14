@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 #[derive(Debug)]
 pub struct Error {
     pub msg: String,
@@ -17,6 +15,7 @@ mod x11_wrapper;
 mod point;
 mod glyph;
 mod utils;
+mod charset;
 mod shortcut;
 mod keymap;
 mod snap;

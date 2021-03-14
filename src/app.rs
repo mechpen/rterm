@@ -92,7 +92,6 @@ impl App {
             if rfds.contains(win_fd) {
                 self.win.process_input(&mut self.term);
             }
-
             if rfds.contains(pty_fd) {
                 let n = self.term.pty.read(&mut buf)?;
                 self.vte.process_input(

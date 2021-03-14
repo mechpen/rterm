@@ -22,29 +22,19 @@ use crate::Result;
 
 bitflags! {
     pub struct WinMode: u32 {
-        const APPKEYPAD   = 1 << 2;
-        const MOUSEBTN    = 1 << 3;
-        const MOUSEMOTION = 1 << 4;
-        const REVERSE     = 1 << 5;
-        const KBDLOCK     = 1 << 6;
-        const HIDE        = 1 << 7;
-        const APPCURSOR   = 1 << 8;
-        const MOUSESGR    = 1 << 9;
-        const EIGHTBIT    = 1 << 10;
-        const BLINK       = 1 << 11;
-        const FBLINK      = 1 << 12;
-        const FOCUS       = 1 << 13;
-        const MOUSEX10    = 1 << 14;
-        const MOUSEMANY   = 1 << 15;
-        const BRCKTPASTE  = 1 << 16;
-        const NUMLOCK     = 1 << 17;
-        const ECHO        = 1 << 18;
+        const APPKEYPAD   = 1 << 0;
+        const REVERSE     = 1 << 1;
+        const HIDE        = 1 << 2;
+        const APPCURSOR   = 1 << 3;
+        const EIGHT_BIT   = 1 << 4;
+        const BLINK       = 1 << 5;
+        const NUMLOCK     = 1 << 6;
+        const ECHO        = 1 << 7;
     }
 }
 
 pub struct Win {
     visible: bool,
-    focused: bool,
     mode: WinMode,
 
     dpy: x11::Display,
@@ -139,7 +129,6 @@ impl Win {
 
         Ok(Win {
             visible: true,
-            focused: true,
             mode: WinMode::empty(),
 
             sel_type: sel_type,
@@ -171,12 +160,8 @@ impl Win {
     pub fn bell(&self) {
     }
 
-    pub fn set_mode(&mut self, mode: WinMode) {
-        self.mode.insert(mode);
-    }
-
-    pub fn clear_mode(&mut self, mode: WinMode) {
-        self.mode.remove(mode);
+    pub fn set_mode(&mut self, mode: WinMode, val: bool) {
+        self.mode.set(mode, val);
     }
 
     pub fn undraw_cursor(&mut self, term: &Term) {
@@ -198,8 +183,10 @@ impl Win {
             term.dirty[y] = false;
         }
 
-        let (x, y, g) = term.get_glyph_at_cursor();
-        self.draw_cells(&[g.c], g.prop, x*self.cw, y*self.ch);
+        if !self.mode.contains(WinMode::HIDE) {
+            let (x, y, g) = term.get_glyph_at_cursor();
+            self.draw_cells(&[g.c], g.prop, x*self.cw, y*self.ch);
+        }
 
         self.finish_draw(term.cols, term.rows);
     }
@@ -213,11 +200,12 @@ impl Win {
 
             let xev_type = x11::event_type(&xev);
             match xev_type {
+                x11::KEY_RELEASE => (),
                 x11::KEY_PRESS => self.key_press(xev, term),
                 x11::CLIENT_MESSAGE => self.client_message(xev),
                 x11::CONFIGURE_NOTIFY => self.configure_notify(xev, term),
                 x11::VISIBILITY_NOTIFY => self.visibility_notify(xev),
-                x11::UNMAP_NOTIFY => self.unmap_notify(xev),
+                x11::UNMAP_NOTIFY => self.unmap_notify(),
                 x11::MOTION_NOTIFY => self.motion_notify(xev, term),
                 x11::BUTTON_PRESS => self.button_press(xev, term),
                 x11::BUTTON_RELEASE => self.button_release(xev, term),
@@ -249,7 +237,7 @@ impl Win {
         }
 
         if len == 1 && xev.state & x11::MOD1_MASK != 0 {
-            if self.mode.contains(WinMode::EIGHTBIT) {
+            if self.mode.contains(WinMode::EIGHT_BIT) {
                 if buf[0] < 0x7F {
                     buf[0] |= 0x80;
                 }
@@ -293,7 +281,7 @@ impl Win {
         self.visible = xev.state != x11::VisibilityFullyObscured;
     }
 
-    fn unmap_notify(&mut self, _xev: x11::XEvent) {
+    fn unmap_notify(&mut self) {
         self.visible = false;
     }
 

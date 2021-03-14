@@ -81,6 +81,13 @@ impl Glyph {
     pub fn new(c: char, fg: usize, bg: usize, attr: GlyphAttr) -> Self {
         Self { c, prop: GlyphProp::new(fg, bg, attr) }
     }
+
+    pub fn clear(&mut self, cursor: Glyph) {
+        self.c = ' ';
+        self.prop.fg = cursor.prop.fg;
+        self.prop.bg = cursor.prop.bg;
+        self.prop.attr = GlyphAttr::empty();
+    }
 }
 
 pub fn blank_glyph() -> Glyph {

@@ -49,8 +49,9 @@ pub use xlib::ButtonPressMask as BUTTON_PRESS_MASK;
 pub use xlib::ButtonReleaseMask as BUTTON_RELEASE_MASK;
 
 pub use xlib::XKeyEvent;
-pub use xlib::KeyPress as KEY_PRESS;
 pub use xlib::Mod1Mask as MOD1_MASK;
+pub use xlib::KeyPress as KEY_PRESS;
+pub use xlib::KeyRelease as KEY_RELEASE;
 
 pub use xlib::ButtonPress as BUTTON_PRESS;
 pub use xlib::ButtonRelease as BUTTON_RELEASE;
@@ -151,10 +152,6 @@ pub fn XCreateWindow(
     }
 }
 
-pub fn XResizeWindow(dpy: Display, win: Window, width: usize, height: usize) {
-    unsafe { xlib::XResizeWindow(dpy, win, cast(width), cast(height)); }
-}
-    
 pub fn XStoreName(dpy: Display, win: Window, name: &str) {
     let name = CString::new(name).unwrap();
     unsafe { xlib::XStoreName(dpy, win, name.as_ptr() as *mut _); }

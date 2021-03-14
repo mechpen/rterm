@@ -12,6 +12,7 @@ use nix::sys::signal::{
     kill,
     Signal,
 };
+use nix::errno::Errno;
 use nix::libc;
 use nix::ioctl_write_ptr_bad;
 use std::os::unix::io::RawFd;
@@ -64,7 +65,11 @@ impl Pty {
     }
 
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
-        Ok(read(self.master_fd, buf)?)
+        match read(self.master_fd, buf) {
+            Ok(n) => Ok(n),
+            Err(nix::Error::Sys(Errno::EIO)) => Ok(0),
+            Err(err) => return Err(err.into()),
+        }
     }
 
     pub fn need_flush(&self) -> bool {

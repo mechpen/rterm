@@ -10,7 +10,7 @@ pub enum Function {
 }
 
 impl Function {
-    pub fn execute(&self, win: &mut Win, term: &mut Term) {
+    pub fn execute(&self, win: &mut Win, _term: &mut Term) {
         match self {
             Function::Paste => win.selection_paste(),
         }
@@ -38,8 +38,8 @@ macro_rules! make_shortcuts {
 }
 
 const SHORTCUTS: &[Shortcut] = make_shortcuts!{
-    /* mask                 keysym          function */
-    { ShiftMask,            XK_Insert,      Function::Paste },
+    /* mask                  keysym          function */
+    { ShiftMask,             XK_Insert,      Function::Paste },
 };
 
 pub fn find_shortcut(k: KeySym, state: c_uint) -> Option<Function> {

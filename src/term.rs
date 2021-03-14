@@ -17,6 +17,7 @@ use crate::snap::{
     SnapMode,
     is_delim,
 };
+use crate::charset::CharsetTable;
 use crate::cursor::Cursor;
 use crate::point::Point;
 use crate::pty::Pty;
@@ -42,7 +43,7 @@ impl Selection {
 }
 
 bitflags! {
-    pub struct Mode: u32 {
+    pub struct TermMode: u32 {
         const WRAP        = 1 << 0;
         const INSERT      = 1 << 1;
         const ORIGIN      = 1 << 2;
@@ -64,9 +65,10 @@ pub struct Term {
     pub pty: Pty,
     pub scroll_top: usize,
     pub scroll_bot: usize,
+    pub charset: CharsetTable,
     lines: Vec<Vec<Glyph>>,
     tabs: Vec<bool>,
-    mode: Mode,
+    mode: TermMode,
     sel: Selection,
 }
 
@@ -81,7 +83,8 @@ impl Term {
             pty: Pty::new()?,
             scroll_top: 0,
             scroll_bot: 0,
-            mode: Mode::WRAP,
+            charset: CharsetTable::new(),
+            mode: TermMode::WRAP,
             tabs: Vec::new(),
             sel: Selection::new(),
         };
@@ -134,6 +137,10 @@ impl Term {
         true
     }
 
+    pub fn set_mode(&mut self, mode: TermMode, val: bool) {
+        self.mode.set(mode, val);
+    }
+
     pub fn get_glyph(&self, x: usize, y: usize) -> Glyph {
         let mut g = self.lines[y][x];
         g.prop = g.prop.resolve(self.is_selected(x, y));
@@ -180,7 +187,7 @@ impl Term {
         for y in yrange {
             self.dirty[y] = true;
             for x in xrange.clone() {
-                self.lines[y][x] = blank_glyph();
+                self.lines[y][x].clear(self.c.glyph);
                 if self.is_selected(x, y) {
                     self.clear_selection();
                 }
@@ -244,15 +251,22 @@ impl Term {
         }
     }
 
+    // move to a y pos that is not derived from a previous y pos
+    pub fn move_ato(&mut self, x: usize, y: usize) {
+        let mut y = y;
+        if self.mode.contains(TermMode::ORIGIN) {
+            y += self.scroll_top;
+        }
+        self.move_to(x, y);
+    }
+
     pub fn move_to(&mut self, x: usize, y: usize) {
         self.c.x = cmp::min(x, self.cols-1);
-
-        if self.mode.contains(Mode::ORIGIN) {
+        if self.mode.contains(TermMode::ORIGIN) {
             self.c.y = limit(y, self.scroll_top, self.scroll_bot);
         } else {
             self.c.y = cmp::min(y, self.rows-1);
         }
-
         self.c.wrap_next = false;
     }
 
@@ -306,7 +320,7 @@ impl Term {
             self.c.wrap_next = false;
         }
 
-        if self.mode.contains(Mode::INSERT) && self.c.x + width < self.cols {
+        if self.mode.contains(TermMode::INSERT) && self.c.x + width < self.cols {
             self.insert_blanks(width);
         }
 
@@ -327,7 +341,7 @@ impl Term {
 
         self.c.x += width;
         if self.c.x == self.cols {
-            if self.mode.contains(Mode::WRAP) {
+            if self.mode.contains(TermMode::WRAP) {
                 self.c.x -= width;
                 self.c.wrap_next = true;
             } else {
