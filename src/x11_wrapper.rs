@@ -42,6 +42,7 @@ pub use xlib::CWColormap as CW_COLOR_MAP;
 pub use xlib::CWEventMask as CW_EVENT_MASK;
 
 pub use xlib::KeyPressMask as KEY_PRESS_MASK;
+pub use xlib::ExposureMask as EXPOSURE_MASK;
 pub use xlib::VisibilityChangeMask as VISIBILITY_CHANGE_MASK;
 pub use xlib::StructureNotifyMask as STRUCTURE_NOTIFY_MASK;
 pub use xlib::ButtonMotionMask as BUTTON_MOTION_MASK;
@@ -59,6 +60,8 @@ pub use xlib::XButtonEvent;
 
 pub use xlib::MotionNotify as MOTION_NOTIFY;
 pub use xlib::XMotionEvent;
+
+pub use xlib::Expose as EXPOSE;
 
 pub use xlib::VisibilityNotify as VISIBILITY_NOTIFY;
 pub use xlib::XVisibilityEvent;

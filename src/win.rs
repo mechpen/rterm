@@ -85,6 +85,7 @@ impl Win {
         attributes.colormap = cmap;
         attributes.background_pixel = colors[bg_color()].pixel;
         attributes.event_mask = x11::KEY_PRESS_MASK
+            | x11::EXPOSURE_MASK
             | x11::VISIBILITY_CHANGE_MASK
             | x11::STRUCTURE_NOTIFY_MASK
             | x11::BUTTON_MOTION_MASK
@@ -200,6 +201,7 @@ impl Win {
 
             let xev_type = x11::event_type(&xev);
             match xev_type {
+                x11::EXPOSE => (),
                 x11::KEY_RELEASE => (),
                 x11::KEY_PRESS => self.key_press(xev, term),
                 x11::CLIENT_MESSAGE => self.client_message(xev),
