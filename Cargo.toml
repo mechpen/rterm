@@ -14,6 +14,7 @@ nix = "0.18"
 vte = "0.10"
 bitflags = "1.2"
 unicode-width = "0.1"
+servo-fontconfig = "0.5"
 
 [[bin]]
 name = "rterm"

@@ -2,8 +2,10 @@
 
 use x11::xlib;
 use x11::xft;
+use fontconfig::fontconfig as fc;
 use std::mem;
 use std::os::raw::*;
+use std::ffi::CStr;
 use std::ffi::CString;
 use std::convert::TryInto;
 use std::ptr::{
@@ -84,10 +86,15 @@ pub use xlib::XClientMessageEvent;
 
 pub use xft::XftColor;
 
+pub use fc::FC_SLANT_ITALIC;
+pub use fc::FC_SLANT_ROMAN;
+pub use fc::FC_WEIGHT_BOLD;
+
 pub type Display = *mut xlib::Display;
 pub type Visual = *mut xlib::Visual;
 pub type XftFont = *mut xft::XftFont;
 pub type XftDraw = *mut xft::XftDraw;
+pub type FcPattern = *mut xft::FcPattern;
 
 fn cast<T, V>(v: V) -> T
 where V: TryInto<T>, <V as TryInto<T>>::Error: std::fmt::Debug
@@ -321,13 +328,32 @@ pub fn XConvertSelection(
     }
 }
 
-pub fn XftFontOpenName(
-    dpy: Display, scr: c_int, name: &str
-) -> Result<XftFont> {
+pub fn XftNameParse(name: &str) -> Result<FcPattern> {
     let name = CString::new(name).unwrap();
-    let font = unsafe {
-        xft::XftFontOpenName(dpy, scr, name.as_ptr() as *mut _)
+    let pattern = unsafe {
+        xft::XftNameParse(name.as_ptr() as *const _)
     };
+    if pattern == null_mut() {
+        return Err("can't parse font name".into());
+    }
+    Ok(pattern)
+}
+
+pub fn XftFontMatch(
+    dpy: Display, scr: c_int, pattern: FcPattern
+) -> Result<FcPattern> {
+    let mut result = xft::FcResult::NoMatch;
+    let pattern = unsafe {
+        xft::XftFontMatch(dpy, scr, pattern, &mut result)
+    };
+    if pattern == null_mut() {
+        return Err("can't match font".into());
+    }
+    Ok(pattern)
+}
+
+pub fn XftFontOpenPattern(dpy: Display, pattern: FcPattern) -> Result<XftFont> {
+    let font = unsafe { xft::XftFontOpenPattern(dpy, pattern) };
     if font == null_mut() {
         return Err("can't load font".into());
     }
@@ -385,4 +411,16 @@ pub fn XftCharIndex(dpy: Display, font: XftFont, c: char) -> c_uint {
 
 pub fn XftDrawChange(xft_draw: XftDraw, d: c_ulong) {
     unsafe { xft::XftDrawChange(xft_draw, d); }
+}
+
+pub fn FcPatternDestroy(pattern: FcPattern) {
+    unsafe { fc::FcPatternDestroy(pattern as _) }
+}
+
+pub fn FcPatternDel(pattern: FcPattern, object: &CStr) {
+    unsafe { fc::FcPatternDel(pattern as _, object.as_ptr()); }
+}
+
+pub fn FcPatternAddInteger(pattern: FcPattern, object: &CStr, i: c_int) {
+    unsafe { fc::FcPatternAddInteger(pattern as _, object.as_ptr(), i); }
 }

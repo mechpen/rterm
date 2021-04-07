@@ -19,6 +19,7 @@ mod charset;
 mod shortcut;
 mod keymap;
 mod snap;
+mod font;
 mod shell;
 mod cursor;
 mod color;

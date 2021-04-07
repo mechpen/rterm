@@ -11,6 +11,7 @@ use crate::glyph::{
     GlyphProp,
     GlyphAttr,
 };
+use crate::font::Font;
 use crate::utils::term_decode;
 use crate::shortcut::find_shortcut;
 use crate::keymap::map_key;
@@ -44,7 +45,7 @@ pub struct Win {
     gc: x11::GC,
     colors: Vec<x11::XftColor>,
     draw: x11::XftDraw,
-    font: x11::XftFont,
+    font: Font,
     cw: usize,
     ch: usize,
     ca: usize,
@@ -65,9 +66,9 @@ impl Win {
         let root = x11::XRootWindow(dpy, scr);
 
         let font = font.unwrap_or("monospace");
-        let font = x11::XftFontOpenName(dpy, scr, font)?;
-        let (cw, ch) = x11::font_size(font);
-        let ca = x11::font_ascent(font);
+        let font = Font::new(dpy, scr, font)?;
+        let (cw, ch) = font.size();
+        let ca = font.ascent();
         let (width, height) = (cols*cw, rows*ch);
 
         let cmap = x11::XDefaultColormap(dpy, scr);
@@ -397,12 +398,13 @@ impl Win {
 
         let fg = &self.colors[fg];
         let bg = &self.colors[bg];
+        let font = self.font.get(attr);
 
         x11::XftDrawRect(self.draw, bg, xp, yp, cs.len()*self.cw, self.ch);
         let idx = cs.iter()
-            .map(|&c| x11::XftCharIndex(self.dpy, self.font, c))
+            .map(|&c| x11::XftCharIndex(self.dpy, font, c))
             .collect::<Vec<u32>>();
-        x11::XftDrawGlyphs(self.draw, fg, self.font, xp, yp+self.ca, &idx);
+        x11::XftDrawGlyphs(self.draw, fg, font, xp, yp+self.ca, &idx);
     }
 
     fn draw_line(&mut self, term: &mut Term, y: usize) {
