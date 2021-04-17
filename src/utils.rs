@@ -52,7 +52,17 @@ pub fn term_decode(buf: &[u8]) -> String {
     string
 }
 
-pub fn parse_geometry(s: &str) -> Result<(usize, usize)> {
+pub fn parse_geometry(s: &str) -> Result<(usize, usize, usize, usize)> {
+    let mut xoff = 0;
+    let mut yoff = 0;
+
+    let fields = s.split('+').collect::<Vec<&str>>();
+    if fields.len() == 3 {
+        xoff = fields[1].parse::<usize>()?;
+        yoff = fields[2].parse::<usize>()?;
+    }
+
+    let s = fields[0];
     let fields = s.split('x').collect::<Vec<&str>>();
     if fields.len() != 2 {
         return Err("invalid geometry".into());
@@ -60,5 +70,5 @@ pub fn parse_geometry(s: &str) -> Result<(usize, usize)> {
 
     let cols = fields[0].parse::<usize>()?;
     let rows = fields[1].parse::<usize>()?;
-    Ok((cols, rows))
+    Ok((cols, rows, xoff, yoff))
 }

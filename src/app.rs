@@ -62,16 +62,16 @@ impl App {
             Some(x) => Some(File::create(x)?),
             None => None,
         };
-        let (cols, rows) = match geometry {
+        let (cols, rows, xoff, yoff) = match geometry {
             Some(x) => parse_geometry(x)?,
-            None => (80, 24),
+            None => (80, 24, 0, 0),
         };
 
         set_sigchld();
 
         let term = Term::new(cols, rows)?;
         Ok(App {
-            win: Win::new(term.cols, term.rows, font)?,
+            win: Win::new(term.cols, term.rows, xoff, yoff, font)?,
             term: term,
             vte: Vte::new(),
             log: log,

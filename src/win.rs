@@ -59,7 +59,9 @@ pub struct Win {
 }
 
 impl Win {
-    pub fn new(cols: usize, rows: usize, font: Option<&str>) -> Result<Self> {
+    pub fn new(
+        cols: usize, rows: usize, xoff: usize, yoff: usize, font: Option<&str>
+    ) -> Result<Self> {
         let dpy = x11::XOpenDisplay()?;
         let scr = x11::XDefaultScreen(dpy);
         let vis = x11::XDefaultVisual(dpy, scr);
@@ -94,7 +96,7 @@ impl Win {
             | x11::BUTTON_RELEASE_MASK;
 
         let win = x11::XCreateWindow(
-            dpy, root, 0, 0, width, height, 0, depth,
+            dpy, root, xoff, yoff, width, height, 0, depth,
             x11::INPUT_OUTPUT, vis, attributes_mask, &mut attributes,
         );
         x11::XStoreName(dpy, win, "rterm");
