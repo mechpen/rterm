@@ -355,8 +355,12 @@ impl Win {
     }
 
     fn selection_request(&mut self, xev: x11::XEvent) {
+        if self.sel_text.is_none() {
+            return;
+        }
+
         let xev: &x11::XSelectionRequestEvent = x11::cast_event(&xev);
-        let text = self.sel_text.as_ref().ok_or("sel_text is none").unwrap();
+        let text = self.sel_text.as_ref().unwrap();
 
         let targets = x11::XInternAtom(self.dpy, "TARGETS", x11::False);
         if xev.target == targets {
