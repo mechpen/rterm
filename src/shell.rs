@@ -26,8 +26,7 @@ fn _exec_shell() -> Result<()> {
     env::set_var("USER",    &user.name);
     env::set_var("HOME",    &user.dir);
     env::set_var("SHELL",   &shell);
-    // FIXME: check TERM support
-    env::set_var("TERM",    "st-256color");
+    env::set_var("TERM",    "xterm");
 
     unsafe {
         signal(Signal::SIGCHLD, SigHandler::SigDfl)?;
