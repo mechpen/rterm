@@ -13,8 +13,8 @@ struct Key {
     mask: c_uint,
     s: &'static [u8],
     /* three-valued logic variables: 0 indifferent, 1 on, -1 off */
-    appkeypad: c_char, /* application keypad */
-    appcursor: c_char, /* application cursor */
+    appkeypad: i8, /* application keypad */
+    appcursor: i8, /* application cursor */
 }
 
 macro_rules! make_keys {
