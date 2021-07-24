@@ -119,7 +119,7 @@ pub fn cast_event<T>(event: &XEvent) -> &T {
 
 pub fn XOpenDisplay() -> Result<Display> {
     let dpy = unsafe { xlib::XOpenDisplay(null()) };
-    if dpy == null_mut() {
+    if dpy.is_null() {
         return Err("can't open display".into());
     }
     Ok(dpy)
@@ -145,6 +145,7 @@ pub fn XRootWindow(dpy: Display, scr: c_int) -> Window {
     unsafe { xlib::XRootWindow(dpy, scr) }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn XCreateWindow(
     dpy: Display,
     parent: Window,
@@ -249,6 +250,7 @@ pub fn XCloseDisplay(dpy: Display) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn XCopyArea(
     dpy: Display,
     src: c_ulong,
@@ -323,6 +325,7 @@ pub fn XLookupString(event: &mut XKeyEvent, buf: &mut [u8]) -> (KeySym, usize) {
     (ksym, cast(len))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn XGetWindowProperty(
     dpy: Display,
     win: Window,
@@ -355,6 +358,7 @@ pub fn XGetWindowProperty(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn XChangeProperty(
     dpy: Display,
     win: Window,
@@ -415,7 +419,7 @@ pub fn XConvertSelection(
 pub fn XftNameParse(name: &str) -> Result<FcPattern> {
     let name = CString::new(name).unwrap();
     let pattern = unsafe { xft::XftNameParse(name.as_ptr() as *const _) };
-    if pattern == null_mut() {
+    if pattern.is_null() {
         return Err("can't parse font name".into());
     }
     Ok(pattern)
@@ -424,7 +428,7 @@ pub fn XftNameParse(name: &str) -> Result<FcPattern> {
 pub fn XftFontMatch(dpy: Display, scr: c_int, pattern: FcPattern) -> Result<FcPattern> {
     let mut result = xft::FcResult::NoMatch;
     let pattern = unsafe { xft::XftFontMatch(dpy, scr, pattern, &mut result) };
-    if pattern == null_mut() {
+    if pattern.is_null() {
         return Err("can't match font".into());
     }
     Ok(pattern)
@@ -432,7 +436,7 @@ pub fn XftFontMatch(dpy: Display, scr: c_int, pattern: FcPattern) -> Result<FcPa
 
 pub fn XftFontOpenPattern(dpy: Display, pattern: FcPattern) -> Result<XftFont> {
     let font = unsafe { xft::XftFontOpenPattern(dpy, pattern) };
-    if font == null_mut() {
+    if font.is_null() {
         return Err("can't load font".into());
     }
     Ok(font)

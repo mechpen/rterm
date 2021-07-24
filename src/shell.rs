@@ -9,7 +9,8 @@ use std::process::exit;
 
 fn _exec_shell() -> Result<()> {
     let user = User::from_uid(Uid::current())?.unwrap();
-    let shell = env::var_os("SHELL").unwrap_or(user.shell.into());
+    let shell_default = &user.shell;
+    let shell = env::var_os("SHELL").unwrap_or_else(|| shell_default.into());
 
     env::remove_var("COLUMNS");
     env::remove_var("LINES");

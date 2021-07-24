@@ -270,10 +270,8 @@ impl<'a> Perform for Performer<'a> {
                 win.set_mode(WinMode::APPKEYPAD, false)
             }
             (b'\\', None) =>
-            // ST -- String Terminator
-            {
-                ()
-            }
+                // ST -- String Terminator
+                {}
             _ => println!("unknown esc {:?} {}", intermediate, byte as char),
         }
     }

@@ -514,10 +514,8 @@ impl Term {
         if p.x < self.cols - 1 {
             return Some(Point::new(p.x + 1, p.y));
         }
-        if p.y < self.rows - 1 {
-            if self.lines[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP) {
-                return Some(Point::new(0, p.y + 1));
-            }
+        if p.y < self.rows - 1 && self.lines[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP) {
+            return Some(Point::new(0, p.y + 1));
         }
         None
     }

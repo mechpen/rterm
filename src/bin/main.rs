@@ -39,7 +39,7 @@ fn _main() -> Result<()> {
             i += 1;
             continue;
         }
-        if arg.starts_with("-") {
+        if arg.starts_with('-') {
             usage();
             return Err("invalid option".into());
         }
@@ -48,7 +48,7 @@ fn _main() -> Result<()> {
     let mut app = App::new(geometry, font, log)?;
     app.run()?;
 
-    return Ok(());
+    Ok(())
 }
 
 fn main() {

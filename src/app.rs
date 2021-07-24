@@ -62,9 +62,9 @@ impl App {
         let term = Term::new(cols, rows)?;
         Ok(App {
             win: Win::new(term.cols, term.rows, xoff, yoff, font)?,
-            term: term,
+            term,
             vte: Vte::new(),
-            log: log,
+            log,
         })
     }
 

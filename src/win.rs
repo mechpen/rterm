@@ -141,7 +141,7 @@ impl Win {
             visible: true,
             mode: WinMode::empty(),
 
-            sel_type: sel_type,
+            sel_type,
             sel_snap: Snap::new(),
             sel_text: None,
 

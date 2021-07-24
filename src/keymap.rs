@@ -272,20 +272,16 @@ pub fn map_key(k: KeySym, state: c_uint, mode: &WinMode) -> Option<&'static [u8]
             if key.appkeypad < 0 {
                 continue;
             }
-        } else {
-            if key.appkeypad > 0 {
-                continue;
-            }
+        } else if key.appkeypad > 0 {
+            continue;
         }
 
         if appcursor {
             if key.appcursor < 0 {
                 continue;
             }
-        } else {
-            if key.appcursor > 0 {
-                continue;
-            }
+        } else if key.appcursor > 0 {
+            continue;
         }
 
         return Some(key.s);

@@ -62,7 +62,7 @@ impl Pty {
         match read(self.master_fd, buf) {
             Ok(n) => Ok(n),
             Err(nix::Error::Sys(Errno::EIO)) => Ok(0),
-            Err(err) => return Err(err.into()),
+            Err(err) => Err(err.into()),
         }
     }
 
