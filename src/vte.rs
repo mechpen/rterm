@@ -1,22 +1,9 @@
-use vte::{
-    Parser,
-    Params,
-    Perform,
-};
-use std::iter;
+use crate::charset::{Charset, CharsetIndex};
 use crate::glyph::GlyphAttr;
-use crate::charset::{
-    CharsetIndex,
-    Charset,
-};
-use crate::term::{
-    TermMode,
-    Term,
-};
-use crate::win::{
-    WinMode,
-    Win,
-};
+use crate::term::{Term, TermMode};
+use crate::win::{Win, WinMode};
+use std::iter;
+use vte::{Params, Parser, Perform};
 
 pub struct Vte {
     parser: Parser,
@@ -31,11 +18,10 @@ impl Vte {
         }
     }
 
-    pub fn process_input(
-        &mut self, buf: &[u8], win: &mut Win, term: &mut Term
-    ) {
+    pub fn process_input(&mut self, buf: &[u8], win: &mut Win, term: &mut Term) {
         let mut performer = Performer::new(win, term, self.last_c.take());
-        buf.iter().for_each(|&b| self.parser.advance(&mut performer, b));
+        buf.iter()
+            .for_each(|&b| self.parser.advance(&mut performer, b));
         self.last_c = performer.last_c.take();
     }
 }
@@ -49,9 +35,7 @@ struct Performer<'a> {
 }
 
 impl<'a> Performer<'a> {
-    pub fn new(
-        win: &'a mut Win, term: &'a mut Term, last_c: Option<char>
-    ) -> Self {
+    pub fn new(win: &'a mut Win, term: &'a mut Term, last_c: Option<char>) -> Self {
         Self { win, term, last_c }
     }
 
@@ -94,9 +78,7 @@ impl<'a> Performer<'a> {
         }
     }
 
-    fn set_mode(
-        &mut self, intermediate: Option<&u8>, params: &Params, val: bool
-    ) {
+    fn set_mode(&mut self, intermediate: Option<&u8>, params: &Params, val: bool) {
         let private = match intermediate {
             Some(b'?') => true,
             None => false,
@@ -106,41 +88,61 @@ impl<'a> Performer<'a> {
         if private {
             for param in params.iter() {
                 match param[0] {
-                    1 => // DECCKM -- Cursor key
-                        self.win.set_mode(WinMode::APPCURSOR, val),
-                    5 => // DECSCNM -- Reverse video
-                        self.win.set_mode(WinMode::REVERSE, val),
-                    6 => // DECOM -- Origin
+                    1 =>
+                    // DECCKM -- Cursor key
+                    {
+                        self.win.set_mode(WinMode::APPCURSOR, val)
+                    }
+                    5 =>
+                    // DECSCNM -- Reverse video
+                    {
+                        self.win.set_mode(WinMode::REVERSE, val)
+                    }
+                    6 =>
+                    // DECOM -- Origin
                     {
                         self.term.set_mode(TermMode::ORIGIN, val);
                         self.term.move_ato(0, 0);
-                    },
-                    7 => // DECAWM -- Auto wrap
-                        self.term.set_mode(TermMode::WRAP, val),
-                    25 => // DECTCEM -- Text Cursor Enable Mode
-                        self.win.set_mode(WinMode::HIDE, !val),
-                    1034 =>
-                        self.win.set_mode(WinMode::EIGHT_BIT, val),
-                    1048 =>
+                    }
+                    7 =>
+                    // DECAWM -- Auto wrap
                     {
+                        self.term.set_mode(TermMode::WRAP, val)
+                    }
+                    25 =>
+                    // DECTCEM -- Text Cursor Enable Mode
+                    {
+                        self.win.set_mode(WinMode::HIDE, !val)
+                    }
+                    1034 => self.win.set_mode(WinMode::EIGHT_BIT, val),
+                    1048 => {
                         if val {
                             self.term.save_cursor();
                         } else {
                             self.term.load_cursor();
                         }
-                    },
+                    }
                     _ => (),
                 }
             }
         } else {
             for param in params.iter() {
                 match param[0] {
-                    4 => // IRM -- Insertion-replacement
-                        self.term.set_mode(TermMode::INSERT, val),
-                    12 => // SRM -- Send/Receive
-                        self.win.set_mode(WinMode::ECHO, !val),
-                    20 => // LNM -- Linefeed/new line
-                        self.term.set_mode(TermMode::CRLF, val),
+                    4 =>
+                    // IRM -- Insertion-replacement
+                    {
+                        self.term.set_mode(TermMode::INSERT, val)
+                    }
+                    12 =>
+                    // SRM -- Send/Receive
+                    {
+                        self.win.set_mode(WinMode::ECHO, !val)
+                    }
+                    20 =>
+                    // LNM -- Linefeed/new line
+                    {
+                        self.term.set_mode(TermMode::CRLF, val)
+                    }
                     _ => (),
                 }
             }
@@ -160,20 +162,41 @@ impl<'a> Perform for Performer<'a> {
         let term = &mut *self.term;
 
         match byte {
-            0x07 => // BEL
-                win.bell(),
-            0x08 => // BS
-                term.move_to(term.c.x.saturating_sub(1), term.c.y),
-            0x09 => // HT
-                term.put_tabs(1),
-            0x0D => // CR
-                term.move_to(0, term.c.y),
-            0x0A | 0x0B | 0x0C => // LF VT FF
-                term.new_line(false),
-            0x0E => // SO
-                term.charset.set_current(CharsetIndex::G1),
-            0x0F => // SI
-                term.charset.set_current(CharsetIndex::G0),
+            0x07 =>
+            // BEL
+            {
+                win.bell()
+            }
+            0x08 =>
+            // BS
+            {
+                term.move_to(term.c.x.saturating_sub(1), term.c.y)
+            }
+            0x09 =>
+            // HT
+            {
+                term.put_tabs(1)
+            }
+            0x0D =>
+            // CR
+            {
+                term.move_to(0, term.c.y)
+            }
+            0x0A | 0x0B | 0x0C =>
+            // LF VT FF
+            {
+                term.new_line(false)
+            }
+            0x0E =>
+            // SO
+            {
+                term.charset.set_current(CharsetIndex::G1)
+            }
+            0x0F =>
+            // SI
+            {
+                term.charset.set_current(CharsetIndex::G0)
+            }
             _ => println!("unknown control {:02x}", byte),
         }
     }
@@ -184,50 +207,73 @@ impl<'a> Perform for Performer<'a> {
         let intermediate = intermediates.get(0);
 
         match (byte, intermediate) {
-            (b'B', Some(b'(')) =>
-                term.charset.setup(CharsetIndex::G0, Charset::Ascii),
-            (b'B', Some(b')')) =>
-                term.charset.setup(CharsetIndex::G1, Charset::Ascii),
-            (b'B', Some(b'*')) =>
-                term.charset.setup(CharsetIndex::G2, Charset::Ascii),
-            (b'B', Some(b'+')) =>
-                term.charset.setup(CharsetIndex::G3, Charset::Ascii),
-            (b'D', None) => // IND -- Linefeed
-                term.new_line(false),
-            (b'E', None) => // NEL -- Next line
-                term.new_line(true),
-            (b'H', None) => // HTS -- Horizontal tab stop
-                term.set_tab(term.c.x),
-            (b'M', None) => // RI -- Reverse index
+            (b'B', Some(b'(')) => term.charset.setup(CharsetIndex::G0, Charset::Ascii),
+            (b'B', Some(b')')) => term.charset.setup(CharsetIndex::G1, Charset::Ascii),
+            (b'B', Some(b'*')) => term.charset.setup(CharsetIndex::G2, Charset::Ascii),
+            (b'B', Some(b'+')) => term.charset.setup(CharsetIndex::G3, Charset::Ascii),
+            (b'D', None) =>
+            // IND -- Linefeed
+            {
+                term.new_line(false)
+            }
+            (b'E', None) =>
+            // NEL -- Next line
+            {
+                term.new_line(true)
+            }
+            (b'H', None) =>
+            // HTS -- Horizontal tab stop
+            {
+                term.set_tab(term.c.x)
+            }
+            (b'M', None) =>
+            // RI -- Reverse index
             {
                 if term.c.y == term.scroll_top {
                     term.scroll_down(term.scroll_top, 1);
                 } else {
-                    term.move_to(term.c.x, term.c.y-1);
+                    term.move_to(term.c.x, term.c.y - 1);
                 }
-            },
-            (b'Z', None) => // DECID -- Identify Terminal
-                term.pty.write(VTIDEN.to_vec()),
-            (b'c', None) => // RIS -- Reset to initial state
-                term.reset(), // FIXME: reset title and etc.
-            (b'0', Some(b'(')) =>
-                term.charset.setup(CharsetIndex::G0, Charset::Graphic0),
-            (b'0', Some(b')')) =>
-                term.charset.setup(CharsetIndex::G1, Charset::Graphic0),
-            (b'0', Some(b'*')) =>
-                term.charset.setup(CharsetIndex::G2, Charset::Graphic0),
-            (b'0', Some(b'+')) =>
-                term.charset.setup(CharsetIndex::G3, Charset::Graphic0),
-            (b'7', None) => // DECSC -- Save Cursor
-                term.save_cursor(),
-            (b'8', None) => // DECRC -- Restore Cursor
-                term.load_cursor(),
-            (b'=', None) => // DECPAM -- Application keypad
-                win.set_mode(WinMode::APPKEYPAD, true),
-            (b'>', None) => // DECPNM -- Normal keypad
-                win.set_mode(WinMode::APPKEYPAD, false),
-            (b'\\', None) => // ST -- String Terminator
-                (),
+            }
+            (b'Z', None) =>
+            // DECID -- Identify Terminal
+            {
+                term.pty.write(VTIDEN.to_vec())
+            }
+            (b'c', None) =>
+            // RIS -- Reset to initial state
+            {
+                term.reset()
+            } // FIXME: reset title and etc.
+            (b'0', Some(b'(')) => term.charset.setup(CharsetIndex::G0, Charset::Graphic0),
+            (b'0', Some(b')')) => term.charset.setup(CharsetIndex::G1, Charset::Graphic0),
+            (b'0', Some(b'*')) => term.charset.setup(CharsetIndex::G2, Charset::Graphic0),
+            (b'0', Some(b'+')) => term.charset.setup(CharsetIndex::G3, Charset::Graphic0),
+            (b'7', None) =>
+            // DECSC -- Save Cursor
+            {
+                term.save_cursor()
+            }
+            (b'8', None) =>
+            // DECRC -- Restore Cursor
+            {
+                term.load_cursor()
+            }
+            (b'=', None) =>
+            // DECPAM -- Application keypad
+            {
+                win.set_mode(WinMode::APPKEYPAD, true)
+            }
+            (b'>', None) =>
+            // DECPNM -- Normal keypad
+            {
+                win.set_mode(WinMode::APPKEYPAD, false)
+            }
+            (b'\\', None) =>
+            // ST -- String Terminator
+            {
+                ()
+            }
             _ => println!("unknown esc {:?} {}", intermediate, byte as char),
         }
     }
@@ -251,10 +297,14 @@ impl<'a> Perform for Performer<'a> {
         let arg0 = params_iter.next();
         let arg1 = params_iter.next();
         let arg0_or = |default: usize| {
-            arg0.map(|x| x[0] as usize).filter(|&x| x != 0).unwrap_or(default)
+            arg0.map(|x| x[0] as usize)
+                .filter(|&x| x != 0)
+                .unwrap_or(default)
         };
         let arg1_or = |default: usize| {
-            arg1.map(|x| x[0] as usize).filter(|&x| x != 0).unwrap_or(default)
+            arg1.map(|x| x[0] as usize)
+                .filter(|&x| x != 0)
+                .unwrap_or(default)
         };
 
         match (action, intermediate) {

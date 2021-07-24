@@ -1,5 +1,5 @@
-use std::cmp;
 use crate::Result;
+use std::cmp;
 
 #[inline]
 pub fn is_between<T: PartialOrd>(x: T, a: T, b: T) -> bool {
@@ -13,7 +13,11 @@ pub fn limit<T: Ord>(x: T, min: T, max: T) -> T {
 
 #[inline]
 pub fn sort_pair<T: Ord>(a: T, b: T) -> (T, T) {
-    if a > b { (b, a) } else { (a, b) }
+    if a > b {
+        (b, a)
+    } else {
+        (a, b)
+    }
 }
 
 #[inline]

@@ -1,8 +1,8 @@
-use std::os::raw::c_int;
-use std::ffi::CString;
-use crate::x11_wrapper as x11;
 use crate::glyph::GlyphAttr;
+use crate::x11_wrapper as x11;
 use crate::Result;
+use std::ffi::CString;
+use std::os::raw::c_int;
 
 pub struct Font {
     font: x11::XftFont,
@@ -22,30 +22,35 @@ impl Font {
         let slant = CString::new("slant").unwrap();
         let weight = CString::new("weight").unwrap();
 
-	x11::FcPatternDel(pattern, &slant);
-	x11::FcPatternAddInteger(pattern, &slant, x11::FC_SLANT_ITALIC);
+        x11::FcPatternDel(pattern, &slant);
+        x11::FcPatternAddInteger(pattern, &slant, x11::FC_SLANT_ITALIC);
         let matched = x11::XftFontMatch(dpy, scr, pattern)?;
         let ifont = x11::XftFontOpenPattern(dpy, matched)?;
         x11::FcPatternDestroy(matched);
 
-	x11::FcPatternDel(pattern, &weight);
-	x11::FcPatternAddInteger(pattern, &weight, x11::FC_WEIGHT_BOLD);
+        x11::FcPatternDel(pattern, &weight);
+        x11::FcPatternAddInteger(pattern, &weight, x11::FC_WEIGHT_BOLD);
         let matched = x11::XftFontMatch(dpy, scr, pattern)?;
         let ibfont = x11::XftFontOpenPattern(dpy, matched)?;
         x11::FcPatternDestroy(matched);
 
-	x11::FcPatternDel(pattern, &slant);
-	x11::FcPatternAddInteger(pattern, &slant, x11::FC_SLANT_ROMAN);
+        x11::FcPatternDel(pattern, &slant);
+        x11::FcPatternAddInteger(pattern, &slant, x11::FC_SLANT_ROMAN);
         let matched = x11::XftFontMatch(dpy, scr, pattern)?;
         let bfont = x11::XftFontOpenPattern(dpy, matched)?;
         x11::FcPatternDestroy(matched);
 
         x11::FcPatternDestroy(pattern);
-        Ok(Self { font, bfont, ifont, ibfont })
+        Ok(Self {
+            font,
+            bfont,
+            ifont,
+            ibfont,
+        })
     }
 
     pub fn get(&self, attr: GlyphAttr) -> x11::XftFont {
-        if attr.contains(GlyphAttr::BOLD|GlyphAttr::ITALIC) {
+        if attr.contains(GlyphAttr::BOLD | GlyphAttr::ITALIC) {
             return self.ibfont;
         }
         if attr.contains(GlyphAttr::BOLD) {

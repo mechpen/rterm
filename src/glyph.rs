@@ -1,9 +1,6 @@
+use crate::color::{bg_color, fg_color};
 use bitflags::bitflags;
 use std::mem;
-use crate::color::{
-    fg_color,
-    bg_color,
-};
 
 bitflags! {
     pub struct GlyphAttr: u16 {
@@ -79,7 +76,10 @@ pub struct Glyph {
 
 impl Glyph {
     pub fn new(c: char, fg: usize, bg: usize, attr: GlyphAttr) -> Self {
-        Self { c, prop: GlyphProp::new(fg, bg, attr) }
+        Self {
+            c,
+            prop: GlyphProp::new(fg, bg, attr),
+        }
     }
 
     pub fn clear(&mut self, cursor: Glyph) {

@@ -1,43 +1,35 @@
 // FIXME: support wide chars
 
-use bitflags::bitflags;
-use unicode_width::UnicodeWidthChar;
-use std::cmp;
-use crate::utils::{
-    is_between,
-    limit,
-    sort_pair,
-};
-use crate::glyph::{
-    Glyph,
-    GlyphAttr,
-    blank_glyph,
-};
-use crate::snap::{
-    SnapMode,
-    is_delim,
-};
 use crate::charset::CharsetTable;
 use crate::cursor::Cursor;
+use crate::glyph::{blank_glyph, Glyph, GlyphAttr};
 use crate::point::Point;
 use crate::pty::Pty;
+use crate::snap::{is_delim, SnapMode};
+use crate::utils::{is_between, limit, sort_pair};
 use crate::Result;
+use bitflags::bitflags;
+use std::cmp;
+use unicode_width::UnicodeWidthChar;
 
 struct Selection {
-    pub mode:  SnapMode,
+    pub mode: SnapMode,
     pub empty: bool,
-    pub ob:    Point,
-    pub oe:    Point,
-    pub nb:    Point,
-    pub ne:    Point,
+    pub ob: Point,
+    pub oe: Point,
+    pub nb: Point,
+    pub ne: Point,
 }
 
 impl Selection {
     pub fn new() -> Self {
         Selection {
-            mode: SnapMode::None, empty: true,
-            ob: Point::new(0, 0), oe: Point::new(0, 0),
-            nb: Point::new(0, 0), ne: Point::new(0, 0),
+            mode: SnapMode::None,
+            empty: true,
+            ob: Point::new(0, 0),
+            oe: Point::new(0, 0),
+            nb: Point::new(0, 0),
+            ne: Point::new(0, 0),
         }
     }
 }
@@ -102,7 +94,7 @@ impl Term {
         }
 
         if self.c.y > rows - 1 {
-            self.scroll_up(0, self.c.y-rows+1)
+            self.scroll_up(0, self.c.y - rows + 1)
         }
 
         self.lines.resize_with(rows, Vec::new);
@@ -167,8 +159,8 @@ impl Term {
     }
 
     pub fn set_scroll(&mut self, top: usize, bot: usize) {
-        let top = cmp::min(top, self.rows-1);
-        let bot = cmp::min(bot, self.rows-1);
+        let top = cmp::min(top, self.rows - 1);
+        let bot = cmp::min(bot, self.rows - 1);
         let (top, bot) = sort_pair(top, bot);
 
         self.scroll_top = top;
@@ -182,7 +174,9 @@ impl Term {
     }
 
     pub fn clear_region<R1, R2>(&mut self, xrange: R1, yrange: R2)
-    where R1: Iterator<Item = usize> + Clone, R2: Iterator<Item = usize>,
+    where
+        R1: Iterator<Item = usize> + Clone,
+        R2: Iterator<Item = usize>,
     {
         for y in yrange {
             self.dirty[y] = true;
@@ -216,10 +210,10 @@ impl Term {
         if n < 1 {
             return;
         }
-        let n = cmp::min(n, self.scroll_bot-orig+1);
+        let n = cmp::min(n, self.scroll_bot - orig + 1);
 
-        self.clear_lines(orig..orig+n);
-        self.set_dirty(orig+n..=self.scroll_bot);
+        self.clear_lines(orig..orig + n);
+        self.set_dirty(orig + n..=self.scroll_bot);
         self.lines[orig..=self.scroll_bot].rotate_left(n);
 
         self.scroll_selection(orig, -(n as i32));
@@ -230,10 +224,10 @@ impl Term {
         if n < 1 {
             return;
         }
-        let n = cmp::min(n, self.scroll_bot-orig+1);
+        let n = cmp::min(n, self.scroll_bot - orig + 1);
 
-        self.set_dirty(orig..self.scroll_bot-n+1);
-        self.clear_lines(self.scroll_bot-n+1..=self.scroll_bot);
+        self.set_dirty(orig..self.scroll_bot - n + 1);
+        self.clear_lines(self.scroll_bot - n + 1..=self.scroll_bot);
         self.lines[orig..=self.scroll_bot].rotate_right(n);
 
         self.scroll_selection(orig, n as i32);
@@ -261,27 +255,27 @@ impl Term {
     }
 
     pub fn move_to(&mut self, x: usize, y: usize) {
-        self.c.x = cmp::min(x, self.cols-1);
+        self.c.x = cmp::min(x, self.cols - 1);
         if self.mode.contains(TermMode::ORIGIN) {
             self.c.y = limit(y, self.scroll_top, self.scroll_bot);
         } else {
-            self.c.y = cmp::min(y, self.rows-1);
+            self.c.y = cmp::min(y, self.rows - 1);
         }
         self.c.wrap_next = false;
     }
 
     pub fn insert_blanks(&mut self, n: usize) {
-        let n = cmp::min(n, self.cols-self.c.x);
+        let n = cmp::min(n, self.cols - self.c.x);
 
-        self.lines[self.c.y].copy_within(self.c.x..self.cols-n, self.c.x+n);
-        self.clear_region(self.c.x..self.c.x+n, self.c.y..=self.c.y);
+        self.lines[self.c.y].copy_within(self.c.x..self.cols - n, self.c.x + n);
+        self.clear_region(self.c.x..self.c.x + n, self.c.y..=self.c.y);
     }
 
     pub fn delete_chars(&mut self, n: usize) {
-        let n = cmp::min(n, self.cols-self.c.x);
+        let n = cmp::min(n, self.cols - self.c.x);
 
-        self.lines[self.c.y].copy_within(self.c.x+n..self.cols, self.c.x);
-        self.clear_region(self.cols-n..self.cols, self.c.y..=self.c.y);
+        self.lines[self.c.y].copy_within(self.c.x + n..self.cols, self.c.x);
+        self.clear_region(self.cols - n..self.cols, self.c.y..=self.c.y);
     }
 
     pub fn put_tabs(&mut self, n: i32) {
@@ -310,12 +304,15 @@ impl Term {
     pub fn put_char(&mut self, c: char) {
         let width = UnicodeWidthChar::width(c).unwrap_or(0);
         if width == 0 {
-            return
+            return;
         }
 
         if self.c.wrap_next {
             // for wide chars, cursor is not at cols-1
-            self.lines[self.c.y][self.cols-1].prop.attr.insert(GlyphAttr::WRAP);
+            self.lines[self.c.y][self.cols - 1]
+                .prop
+                .attr
+                .insert(GlyphAttr::WRAP);
             self.new_line(true);
             self.c.wrap_next = false;
         }
@@ -324,9 +321,9 @@ impl Term {
             self.insert_blanks(width);
         }
 
-	if self.c.x + width > self.cols {
-	    self.new_line(true);
-	}
+        if self.c.x + width > self.cols {
+            self.new_line(true);
+        }
 
         if self.is_selected(self.c.x, self.c.y) {
             self.clear_selection();
@@ -335,7 +332,7 @@ impl Term {
         self.dirty[self.c.y] = true;
         self.lines[self.c.y][self.c.x].prop = self.c.glyph.prop;
         self.lines[self.c.y][self.c.x].c = c;
-        for x in self.c.x+1..self.c.x+width {
+        for x in self.c.x + 1..self.c.x + width {
             self.lines[self.c.y][x].prop.attr.insert(GlyphAttr::DUMMY);
         }
 
@@ -376,11 +373,11 @@ impl Term {
     pub fn start_selection(&mut self, x: usize, y: usize, mode: SnapMode) {
         // clear previous selection
         self.clear_selection();
-        self.set_dirty(self.sel.nb.y ..= self.sel.ne.y);
+        self.set_dirty(self.sel.nb.y..=self.sel.ne.y);
 
         self.sel.mode = mode;
-        self.sel.ob.x = cmp::min(x, self.cols-1);
-        self.sel.ob.y = cmp::min(y, self.rows-1);
+        self.sel.ob.x = cmp::min(x, self.cols - 1);
+        self.sel.ob.y = cmp::min(y, self.rows - 1);
         self.sel.oe.x = self.sel.ob.x;
         self.sel.oe.y = self.sel.ob.y;
 
@@ -391,16 +388,16 @@ impl Term {
     }
 
     pub fn extend_selection(&mut self, x: usize, y: usize) {
-        self.sel.oe.x = cmp::min(x, self.cols-1);
-        self.sel.oe.y = cmp::min(y, self.rows-1);
+        self.sel.oe.x = cmp::min(x, self.cols - 1);
+        self.sel.oe.y = cmp::min(y, self.rows - 1);
         self.normalize_selection();
     }
 
     pub fn is_selected(&self, x: usize, y: usize) -> bool {
-        !self.sel.empty &&
-            is_between(y, self.sel.nb.y, self.sel.ne.y) &&
-            (y != self.sel.nb.y || x >= self.sel.nb.x) &&
-            (y != self.sel.ne.y || x <= self.sel.ne.x)
+        !self.sel.empty
+            && is_between(y, self.sel.nb.y, self.sel.ne.y)
+            && (y != self.sel.nb.y || x >= self.sel.nb.x)
+            && (y != self.sel.ne.y || x <= self.sel.ne.x)
     }
 
     pub fn clear_selection(&mut self) {
@@ -409,17 +406,13 @@ impl Term {
 
     pub fn get_selection_content(&self) -> Option<String> {
         if self.sel.empty {
-            return None
+            return None;
         }
 
         let mut string = String::new();
 
-        for y in self.sel.nb.y ..= self.sel.ne.y {
-            let start = if y == self.sel.nb.y {
-                self.sel.nb.x
-            } else {
-                0
-            };
+        for y in self.sel.nb.y..=self.sel.ne.y {
+            let start = if y == self.sel.nb.y { self.sel.nb.x } else { 0 };
 
             let end = if y == self.sel.ne.y {
                 self.sel.ne.x
@@ -427,8 +420,8 @@ impl Term {
                 self.cols - 1
             };
 
-            let text_end = cmp::min(end+1, self.text_len(y));
-            for x in start .. text_end {
+            let text_end = cmp::min(end + 1, self.text_len(y));
+            for x in start..text_end {
                 string.push(self.lines[y][x].c);
             }
 
@@ -452,26 +445,26 @@ impl Term {
                 if self.text_len(ne.y) <= ne.x {
                     ne.x = self.cols - 1;
                 }
-            },
+            }
             SnapMode::Word => {
                 nb = self.snap_word(nb, Self::prev);
                 ne = self.snap_word(ne, Self::next);
-            },
+            }
             SnapMode::Line => {
                 nb.x = 0;
-                while nb.y > 0 && self.is_wrap_line(nb.y-1) {
+                while nb.y > 0 && self.is_wrap_line(nb.y - 1) {
                     nb.y -= 1;
                 }
                 ne.x = self.cols - 1;
                 while ne.y < self.rows - 1 && self.is_wrap_line(ne.y) {
                     ne.y += 1;
                 }
-            },
+            }
         }
 
         let bot = cmp::min(nb.y, self.sel.nb.y);
         let top = cmp::max(ne.y, self.sel.ne.y);
-        self.set_dirty(bot ..= top);
+        self.set_dirty(bot..=top);
 
         self.sel.empty = false;
         self.sel.nb = nb;
@@ -483,16 +476,18 @@ impl Term {
             return;
         }
 
-        if !is_between(self.sel.ob.y, orig, self.scroll_bot) ||
-            !is_between(self.sel.ob.y, orig, self.scroll_bot) {
+        if !is_between(self.sel.ob.y, orig, self.scroll_bot)
+            || !is_between(self.sel.ob.y, orig, self.scroll_bot)
+        {
             self.clear_selection();
             return;
         }
 
         let by = self.sel.ob.y as i32 + n;
         let ey = self.sel.oe.y as i32 + n;
-        if !is_between(by, orig as i32, self.scroll_bot as i32) ||
-            !is_between(ey, orig as i32, self.scroll_bot as i32) {
+        if !is_between(by, orig as i32, self.scroll_bot as i32)
+            || !is_between(ey, orig as i32, self.scroll_bot as i32)
+        {
             self.clear_selection();
             return;
         }
@@ -504,12 +499,12 @@ impl Term {
 
     fn prev(&self, p: &Point) -> Option<Point> {
         if p.x > 0 {
-            return Some(Point::new(p.x-1, p.y))
+            return Some(Point::new(p.x - 1, p.y));
         }
         if p.y > 0 {
-            let p = Point::new(self.cols-1, p.y-1);
+            let p = Point::new(self.cols - 1, p.y - 1);
             if self.lines[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP) {
-                return Some(p)
+                return Some(p);
             }
         }
         None
@@ -517,18 +512,19 @@ impl Term {
 
     fn next(&self, p: &Point) -> Option<Point> {
         if p.x < self.cols - 1 {
-            return Some(Point::new(p.x+1, p.y))
+            return Some(Point::new(p.x + 1, p.y));
         }
         if p.y < self.rows - 1 {
             if self.lines[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP) {
-                return Some(Point::new(0, p.y+1))
+                return Some(Point::new(0, p.y + 1));
             }
         }
         None
     }
 
     fn snap_word<F>(&self, point: Point, f: F) -> Point
-    where F: Fn(&Self, &Point)->Option<Point>
+    where
+        F: Fn(&Self, &Point) -> Option<Point>,
     {
         let c = self.lines[point.y][point.x].c;
         let delim = is_delim(c);
@@ -547,15 +543,18 @@ impl Term {
     fn text_len(&self, y: usize) -> usize {
         let mut x = self.cols;
         if self.is_wrap_line(y) {
-            return x
+            return x;
         }
-        while x > 0 && self.lines[y][x-1].c == ' ' {
+        while x > 0 && self.lines[y][x - 1].c == ' ' {
             x -= 1
         }
         x
     }
 
     fn is_wrap_line(&self, y: usize) -> bool {
-        self.lines[y][self.cols-1].prop.attr.contains(GlyphAttr::WRAP)
+        self.lines[y][self.cols - 1]
+            .prop
+            .attr
+            .contains(GlyphAttr::WRAP)
     }
 }

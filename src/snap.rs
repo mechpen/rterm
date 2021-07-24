@@ -1,7 +1,4 @@
-use std::time::{
-    Instant,
-    Duration,
-};
+use std::time::{Duration, Instant};
 
 const WORD_DELIMITERS: &str = " ()[]{}<>`~!@#$%^&*-=+\\|;:'\",.?/";
 

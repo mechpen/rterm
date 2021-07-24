@@ -1,25 +1,19 @@
-use bitflags::bitflags;
-use std::slice;
-use std::ptr::null_mut;
-use std::os::raw::*;
-use std::os::unix::io::RawFd;
-use crate::color::{
-    COLOR_NAMES,
-    bg_color,
-};
-use crate::glyph::{
-    GlyphProp,
-    GlyphAttr,
-};
+use crate::app::app_exit;
+use crate::color::{bg_color, COLOR_NAMES};
 use crate::font::Font;
-use crate::utils::term_decode;
-use crate::shortcut::find_shortcut;
+use crate::glyph::{GlyphAttr, GlyphProp};
 use crate::keymap::map_key;
+use crate::shortcut::find_shortcut;
 use crate::snap::Snap;
 use crate::term::Term;
-use crate::app::app_exit;
+use crate::utils::term_decode;
 use crate::x11_wrapper as x11;
 use crate::Result;
+use bitflags::bitflags;
+use std::os::raw::*;
+use std::os::unix::io::RawFd;
+use std::ptr::null_mut;
+use std::slice;
 
 bitflags! {
     pub struct WinMode: u32 {
@@ -60,7 +54,11 @@ pub struct Win {
 
 impl Win {
     pub fn new(
-        cols: usize, rows: usize, xoff: usize, yoff: usize, font: Option<&str>
+        cols: usize,
+        rows: usize,
+        xoff: usize,
+        yoff: usize,
+        font: Option<&str>,
     ) -> Result<Self> {
         let dpy = x11::XOpenDisplay()?;
         let scr = x11::XDefaultScreen(dpy);
@@ -71,7 +69,7 @@ impl Win {
         let font = Font::new(dpy, scr, font)?;
         let (cw, ch) = font.size();
         let ca = font.ascent();
-        let (width, height) = (cols*cw, rows*ch);
+        let (width, height) = (cols * cw, rows * ch);
 
         let cmap = x11::XDefaultColormap(dpy, scr);
         let mut colors = Vec::with_capacity(COLOR_NAMES.len());
@@ -81,9 +79,7 @@ impl Win {
         }
 
         let depth = x11::XDefaultDepth(dpy, scr);
-        let attributes_mask = x11::CW_BACK_PIXEL
-            | x11::CW_COLOR_MAP
-            | x11::CW_EVENT_MASK;
+        let attributes_mask = x11::CW_BACK_PIXEL | x11::CW_COLOR_MAP | x11::CW_EVENT_MASK;
         let mut attributes: x11::XSetWindowAttributes = x11::zeroed();
         attributes.colormap = cmap;
         attributes.background_pixel = colors[bg_color()].pixel;
@@ -96,8 +92,18 @@ impl Win {
             | x11::BUTTON_RELEASE_MASK;
 
         let win = x11::XCreateWindow(
-            dpy, root, xoff, yoff, width, height, 0, depth,
-            x11::INPUT_OUTPUT, vis, attributes_mask, &mut attributes,
+            dpy,
+            root,
+            xoff,
+            yoff,
+            width,
+            height,
+            0,
+            depth,
+            x11::INPUT_OUTPUT,
+            vis,
+            attributes_mask,
+            &mut attributes,
         );
         x11::XStoreName(dpy, win, "rterm");
 
@@ -161,8 +167,7 @@ impl Win {
         x11::XConnectionNumber(self.dpy)
     }
 
-    pub fn bell(&self) {
-    }
+    pub fn bell(&self) {}
 
     pub fn set_mode(&mut self, mode: WinMode, val: bool) {
         self.mode.set(mode, val);
@@ -171,7 +176,7 @@ impl Win {
     pub fn undraw_cursor(&mut self, term: &Term) {
         let (x, y) = (term.c.x, term.c.y);
         let g = term.get_glyph(x, y);
-        self.draw_cells(&[g.c], g.prop, x*self.cw, y*self.ch);
+        self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
     }
 
     pub fn draw(&mut self, term: &mut Term) {
@@ -189,7 +194,7 @@ impl Win {
 
         if !self.mode.contains(WinMode::HIDE) {
             let (x, y, g) = term.get_glyph_at_cursor();
-            self.draw_cells(&[g.c], g.prop, x*self.cw, y*self.ch);
+            self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
         }
 
         self.finish_draw(term.cols, term.rows);
@@ -329,9 +334,20 @@ impl Win {
 
         loop {
             if x11::XGetWindowProperty(
-                self.dpy, self.win, xev.property, ofs, 1024, 0, 0,
-                &mut t, &mut format, &mut nitems, &mut rem, &mut data
-            ) != 0 {
+                self.dpy,
+                self.win,
+                xev.property,
+                ofs,
+                1024,
+                0,
+                0,
+                &mut t,
+                &mut format,
+                &mut nitems,
+                &mut rem,
+                &mut data,
+            ) != 0
+            {
                 println!("XGetWindowProperty error");
                 return;
             }
@@ -365,14 +381,25 @@ impl Win {
         let targets = x11::XInternAtom(self.dpy, "TARGETS", x11::False);
         if xev.target == targets {
             x11::XChangeProperty(
-                xev.display, xev.requestor, xev.property, x11::XA_ATOM,
-                32, x11::PROP_MODE_REPLACE,
-                &self.sel_type as *const _ as *const _, 1
+                xev.display,
+                xev.requestor,
+                xev.property,
+                x11::XA_ATOM,
+                32,
+                x11::PROP_MODE_REPLACE,
+                &self.sel_type as *const _ as *const _,
+                1,
             );
         } else {
             x11::XChangeProperty(
-                xev.display, xev.requestor, xev.property, xev.target,
-                8, x11::PROP_MODE_REPLACE, text.as_ptr(), text.len()
+                xev.display,
+                xev.requestor,
+                xev.property,
+                xev.target,
+                8,
+                x11::PROP_MODE_REPLACE,
+                text.as_ptr(),
+                text.len(),
             );
         }
 
@@ -389,9 +416,13 @@ impl Win {
         };
 
         if x11::XSendEvent(
-            xev.display, xev.requestor, x11::True, 0,
-            &mut xev1 as *mut _ as *mut _
-        ) == 0 {
+            xev.display,
+            xev.requestor,
+            x11::True,
+            0,
+            &mut xev1 as *mut _ as *mut _,
+        ) == 0
+        {
             println!("XSendEvent error");
         }
     }
@@ -406,11 +437,12 @@ impl Win {
         let bg = &self.colors[bg];
         let font = self.font.get(attr);
 
-        x11::XftDrawRect(self.draw, bg, xp, yp, cs.len()*self.cw, self.ch);
-        let idx = cs.iter()
+        x11::XftDrawRect(self.draw, bg, xp, yp, cs.len() * self.cw, self.ch);
+        let idx = cs
+            .iter()
             .map(|&c| x11::XftCharIndex(self.dpy, font, c))
             .collect::<Vec<u32>>();
-        x11::XftDrawGlyphs(self.draw, fg, font, xp, yp+self.ca, &idx);
+        x11::XftDrawGlyphs(self.draw, fg, font, xp, yp + self.ca, &idx);
     }
 
     fn draw_line(&mut self, term: &mut Term, y: usize) {
@@ -419,27 +451,25 @@ impl Win {
         let mut g0 = term.get_glyph(x0, y);
         let mut cs = vec![g0.c];
 
-        for x in x0+1..term.cols {
+        for x in x0 + 1..term.cols {
             let g = term.get_glyph(x, y);
             if g0.prop == g.prop {
                 cs.push(g.c);
             } else {
-                self.draw_cells(&cs, g0.prop, x0*self.cw, yp);
+                self.draw_cells(&cs, g0.prop, x0 * self.cw, yp);
                 x0 = x;
                 g0 = g;
                 cs = vec![g0.c];
             }
         }
-        self.draw_cells(&cs, g0.prop, x0*self.cw, yp);
+        self.draw_cells(&cs, g0.prop, x0 * self.cw, yp);
     }
 
     fn finish_draw(&self, cols: usize, rows: usize) {
         let width = self.cw * cols;
         let height = self.ch * rows;
         x11::XCopyArea(
-            self.dpy, self.buf, self.win, self.gc,
-            0, 0, width, height,
-            0, 0
+            self.dpy, self.buf, self.win, self.gc, 0, 0, width, height, 0, 0,
         );
         x11::XFlush(self.dpy);
     }
@@ -457,16 +487,21 @@ impl Win {
         let clipboard = x11::XInternAtom(self.dpy, "CLIPBOARD", x11::False);
         x11::XSetSelectionOwner(self.dpy, clipboard, self.win, time);
         x11::XSetSelectionOwner(self.dpy, x11::XA_PRIMARY, self.win, time);
-        if x11::XGetSelectionOwner(self.dpy, clipboard) != self.win ||
-            x11::XGetSelectionOwner(self.dpy, x11::XA_PRIMARY) != self.win {
+        if x11::XGetSelectionOwner(self.dpy, clipboard) != self.win
+            || x11::XGetSelectionOwner(self.dpy, x11::XA_PRIMARY) != self.win
+        {
             term.clear_selection();
         }
     }
 
     pub fn selection_paste(&mut self) {
         x11::XConvertSelection(
-            self.dpy, x11::XA_PRIMARY, self.sel_type,
-            x11::XA_PRIMARY, self.win, x11::CURRENT_TIME,
+            self.dpy,
+            x11::XA_PRIMARY,
+            self.sel_type,
+            x11::XA_PRIMARY,
+            self.win,
+            x11::CURRENT_TIME,
         );
     }
 

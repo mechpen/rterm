@@ -1,8 +1,8 @@
-use x11::xlib::*;
-use x11::keysym::*;
-use std::os::raw::*;
-use crate::win::Win;
 use crate::term::Term;
+use crate::win::Win;
+use std::os::raw::*;
+use x11::keysym::*;
+use x11::xlib::*;
 
 #[derive(Clone, Copy)]
 pub enum Function {
@@ -37,7 +37,7 @@ macro_rules! make_shortcuts {
     }
 }
 
-const SHORTCUTS: &[Shortcut] = make_shortcuts!{
+const SHORTCUTS: &[Shortcut] = make_shortcuts! {
     /* mask                  keysym          function */
     { ShiftMask,             XK_Insert,      Function::Paste },
 };

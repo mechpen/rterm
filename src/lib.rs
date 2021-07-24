@@ -5,27 +5,29 @@ pub struct Error {
 
 impl<T: std::fmt::Display> std::convert::From<T> for Error {
     fn from(e: T) -> Self {
-        Error{ msg: format!("{}", e) }
+        Error {
+            msg: format!("{}", e),
+        }
     }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-mod x11_wrapper;
-mod point;
-mod glyph;
-mod utils;
 mod charset;
-mod shortcut;
-mod keymap;
-mod snap;
-mod font;
-mod shell;
-mod cursor;
 mod color;
-mod term;
-mod win;
-mod vte;
+mod cursor;
+mod font;
+mod glyph;
+mod keymap;
+mod point;
 mod pty;
+mod shell;
+mod shortcut;
+mod snap;
+mod term;
+mod utils;
+mod vte;
+mod win;
+mod x11_wrapper;
 
 pub mod app;

@@ -1,25 +1,15 @@
-use nix::sys::signal::{
-    signal,
-    Signal,
-    SigHandler
-};
-use nix::sys::select::{
-    select,
-    FdSet,
-};
-use nix::errno::Errno;
+use crate::term::Term;
+use crate::utils::parse_geometry;
+use crate::vte::Vte;
+use crate::win::Win;
+use crate::Result;
 use nix;
+use nix::errno::Errno;
+use nix::sys::select::{select, FdSet};
+use nix::sys::signal::{signal, SigHandler, Signal};
 use std::fs::File;
 use std::io::prelude::*;
-use std::sync::atomic::{
-    AtomicBool,
-    Ordering
-};
-use crate::utils::parse_geometry;
-use crate::term::Term;
-use crate::win::Win;
-use crate::vte::Vte;
-use crate::Result;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
@@ -32,11 +22,13 @@ pub fn app_exit() {
 }
 
 fn set_sigchld() {
-    extern fn handle_sigchld(_signal: i32) {
+    extern "C" fn handle_sigchld(_signal: i32) {
         app_exit();
     }
     let handler = SigHandler::Handler(handle_sigchld);
-    unsafe { signal(Signal::SIGCHLD, handler).unwrap(); }
+    unsafe {
+        signal(Signal::SIGCHLD, handler).unwrap();
+    }
 }
 
 // Data flow:
@@ -55,9 +47,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(
-        geometry: Option<&str>, font: Option<&str>, log: Option<&str>
-    ) -> Result<Self> {
+    pub fn new(geometry: Option<&str>, font: Option<&str>, log: Option<&str>) -> Result<Self> {
         let log = match log {
             Some(x) => Some(File::create(x)?),
             None => None,
@@ -75,7 +65,7 @@ impl App {
             term: term,
             vte: Vte::new(),
             log: log,
-         })
+        })
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -111,9 +101,8 @@ impl App {
             if rfds.contains(pty_fd) {
                 let n = self.term.pty.read(&mut buf)?;
                 self.log_pty(&buf[..n])?;
-                self.vte.process_input(
-                    &buf[..n], &mut self.win, &mut self.term
-                );
+                self.vte
+                    .process_input(&buf[..n], &mut self.win, &mut self.term);
             }
 
             self.win.draw(&mut self.term);

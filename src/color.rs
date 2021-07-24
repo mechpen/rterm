@@ -1,27 +1,10 @@
-use std::sync::atomic::{
-    AtomicUsize,
-    Ordering,
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub const COLOR_NAMES: &[&str] = &[
     /* 8 normal colors */
-    "black",
-    "red3",
-    "green3",
-    "yellow3",
-    "blue2",
-    "magenta3",
-    "cyan3",
-    "gray90",
+    "black", "red3", "green3", "yellow3", "blue2", "magenta3", "cyan3", "gray90",
     /* 8 bright colors */
-    "gray50",
-    "red",
-    "green",
-    "yellow",
-    "#5c5cff",
-    "magenta",
-    "cyan",
-    "white",
+    "gray50", "red", "green", "yellow", "#5c5cff", "magenta", "cyan", "white",
 ];
 
 static FG_COLOR: AtomicUsize = AtomicUsize::new(7);

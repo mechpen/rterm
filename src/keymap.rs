@@ -1,12 +1,12 @@
-use x11::xlib::*;
-use x11::keysym::*;
-use std::os::raw::*;
 use crate::win::WinMode;
+use std::os::raw::*;
+use x11::keysym::*;
+use x11::xlib::*;
 
-const XK_ANY_MOD:    u32 = u32::MAX;
-const XK_NO_MOD:     u32 = 0;
-const XK_SWITCH_MOD: u32 = 1<<13;
-const IGNORE_MOD:    u32 = Mod2Mask | XK_SWITCH_MOD;
+const XK_ANY_MOD: u32 = u32::MAX;
+const XK_NO_MOD: u32 = 0;
+const XK_SWITCH_MOD: u32 = 1 << 13;
+const IGNORE_MOD: u32 = Mod2Mask | XK_SWITCH_MOD;
 
 struct Key {
     k: c_uint,
@@ -33,7 +33,7 @@ macro_rules! make_keys {
     }
 }
 
-const KEYS: &[Key] = make_keys!{
+const KEYS: &[Key] = make_keys! {
     /* keysym           mask            string      appkeypad appcursor */
     { XK_KP_Home,       ShiftMask,      b"\x1B[2J",       0,   -1},
     { XK_KP_Home,       ShiftMask,      b"\x1B[1;2H",     0,    1},
@@ -246,9 +246,7 @@ const KEYS: &[Key] = make_keys!{
     { XK_F35,           XK_NO_MOD,      b"\x1B[23;5~",    0,    0},
 };
 
-pub fn map_key(
-    k: KeySym, state: c_uint, mode: &WinMode
-) -> Option<&'static [u8]> {
+pub fn map_key(k: KeySym, state: c_uint, mode: &WinMode) -> Option<&'static [u8]> {
     let k = k as c_uint;
     if k & 0xFFFF < 0xFD00 {
         return None;

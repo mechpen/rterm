@@ -1,25 +1,14 @@
-use nix::unistd::{
-    read,
-    write,
-    ForkResult,
-    Pid,
-};
-use nix::pty::{
-    forkpty,
-    ForkptyResult,
-};
-use nix::sys::signal::{
-    kill,
-    Signal,
-};
-use nix::errno::Errno;
-use nix::libc;
-use nix::ioctl_write_ptr_bad;
-use std::os::unix::io::RawFd;
-use std::convert::TryFrom;
-use std::collections::VecDeque;
 use crate::shell::exec_shell;
 use crate::Result;
+use nix::errno::Errno;
+use nix::ioctl_write_ptr_bad;
+use nix::libc;
+use nix::pty::{forkpty, ForkptyResult};
+use nix::sys::signal::{kill, Signal};
+use nix::unistd::{read, write, ForkResult, Pid};
+use std::collections::VecDeque;
+use std::convert::TryFrom;
+use std::os::unix::io::RawFd;
 
 ioctl_write_ptr_bad!(resizepty, libc::TIOCSWINSZ, libc::winsize);
 
@@ -31,7 +20,10 @@ pub struct Pty {
 
 impl Pty {
     pub fn new() -> Result<Self> {
-        let ForkptyResult { master, fork_result } = forkpty(None, None)?;
+        let ForkptyResult {
+            master,
+            fork_result,
+        } = forkpty(None, None)?;
         let child = match fork_result {
             ForkResult::Parent { child } => child,
             ForkResult::Child => {
@@ -56,7 +48,9 @@ impl Pty {
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
-        unsafe { resizepty(self.master_fd, &ws)?; }
+        unsafe {
+            resizepty(self.master_fd, &ws)?;
+        }
         Ok(())
     }
 

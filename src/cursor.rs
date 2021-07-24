@@ -1,8 +1,5 @@
+use crate::glyph::{blank_glyph, Glyph};
 use std::mem;
-use crate::glyph::{
-    Glyph,
-    blank_glyph,
-};
 
 pub struct Cursor {
     pub glyph: Glyph,
@@ -21,8 +18,10 @@ impl Cursor {
         Cursor {
             glyph: blank_glyph(),
             wrap_next: false,
-            x: 0, y: 0,
-            saved_x: 0, saved_y: 0,
+            x: 0,
+            y: 0,
+            saved_x: 0,
+            saved_y: 0,
         }
     }
 

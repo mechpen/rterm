@@ -1,10 +1,7 @@
 extern crate rterm;
 
+use rterm::{app::App, Result};
 use std::env;
-use rterm::{
-    app::App,
-    Result,
-};
 
 fn usage() {
     println!("usage: rterm [-v] [-g geometry] [-f font] [-o file]");
