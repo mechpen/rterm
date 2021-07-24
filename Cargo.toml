@@ -9,8 +9,8 @@ repository = "https://github.com/mechpen/rterm"
 keywords = ["st", "terminal"]
 
 [dependencies]
-x11 = "2.0"
-nix = "0.18"
+x11 = "2"
+nix = "0.22"
 vte = "0.10"
 bitflags = "1.2"
 unicode-width = "0.1"

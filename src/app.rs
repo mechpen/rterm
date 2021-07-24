@@ -85,7 +85,7 @@ impl App {
 
             match select(None, Some(&mut rfds), Some(&mut wfds), None, None) {
                 Ok(_) => (),
-                Err(nix::Error::Sys(Errno::EINTR)) => continue,
+                Err(Errno::EINTR) => continue,
                 Err(err) => return Err(err.into()),
             }
 

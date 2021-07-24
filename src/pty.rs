@@ -23,7 +23,7 @@ impl Pty {
         let ForkptyResult {
             master,
             fork_result,
-        } = forkpty(None, None)?;
+        } = unsafe { forkpty(None, None)? };
         let child = match fork_result {
             ForkResult::Parent { child } => child,
             ForkResult::Child => {
@@ -61,7 +61,7 @@ impl Pty {
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
         match read(self.master_fd, buf) {
             Ok(n) => Ok(n),
-            Err(nix::Error::Sys(Errno::EIO)) => Ok(0),
+            Err(Errno::EIO) => Ok(0),
             Err(err) => Err(err.into()),
         }
     }
