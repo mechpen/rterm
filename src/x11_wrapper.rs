@@ -81,6 +81,7 @@ pub use xlib::XSelectionEvent;
 pub use xlib::ClientMessage as CLIENT_MESSAGE;
 pub use xlib::XClientMessageEvent;
 
+pub use x11::xrender::XRenderColor;
 pub use xft::XftColor;
 
 pub use fc::FC_SLANT_ITALIC;
@@ -457,6 +458,24 @@ pub fn XftColorAllocName(dpy: Display, vis: Visual, cmap: Colormap, name: &str) 
         xft::XftColorAllocName(dpy, vis, cmap, name.as_ptr(), col.as_mut_ptr());
         col.assume_init()
     }
+}
+
+pub fn XftColorAllocValue(
+    dpy: Display,
+    vis: Visual,
+    cmap: Colormap,
+    renderColor: &XRenderColor,
+) -> XftColor {
+    let mut col = mem::MaybeUninit::uninit();
+    unsafe {
+        xft::XftColorAllocValue(dpy, vis, cmap, renderColor, col.as_mut_ptr());
+        col.assume_init()
+    }
+}
+
+/// color MUST have been allocated by Xft (one of the XftColorAlloc... calls).
+pub unsafe fn XftColorFree(dpy: Display, vis: Visual, cmap: Colormap, mut color: XftColor) {
+    xft::XftColorFree(dpy, vis, cmap, &mut color as *mut XftColor);
 }
 
 pub fn XftDrawCreate(dpy: Display, d: c_ulong, vis: Visual, cmap: c_ulong) -> XftDraw {

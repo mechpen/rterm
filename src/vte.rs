@@ -3,7 +3,7 @@ use crate::glyph::GlyphAttr;
 use crate::term::{Term, TermMode};
 use crate::win::{Win, WinMode};
 use std::iter;
-use vte::{Params, Parser, Perform};
+use vte::{Params, ParamsIter, Parser, Perform};
 
 pub struct Vte {
     parser: Parser,
@@ -39,6 +39,69 @@ impl<'a> Performer<'a> {
         Self { win, term, last_c }
     }
 
+    fn defcolor(params: &mut ParamsIter) -> usize {
+        fn getcolor(params: &mut ParamsIter) -> Option<u16> {
+            if let Some(col) = params.next() {
+                if col.len() == 1 {
+                    Some(col[0])
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+
+        let mut color: usize = 0;
+        if let Some(op) = params.next() {
+            if op.is_empty() {
+                return 0;
+            }
+            match op[0] {
+                2 => {
+                    /* direct color in RGB space */
+                    let r = getcolor(params);
+                    let g = getcolor(params);
+                    let b = getcolor(params);
+                    if let (Some(r), Some(g), Some(b)) = (r, g, b) {
+                        if r > 255 || g > 255 || b > 255 {
+                            println!("erresc: bad rgb color ({},{},{})\n", r, g, b);
+                        } else {
+                            color = 1 << 24 | (r as usize) << 16 | (g as usize) << 8 | b as usize;
+                        }
+                    } else {
+                        println!("erresc(38/48): Incorrect number of parameters: expected three\n");
+                    }
+                }
+                5 => {
+                    /* indexed color */
+                    if let Some(c) = getcolor(params) {
+                        if c <= 255 {
+                            color = c as usize;
+                        } else {
+                            println!(
+                                "erresc(38/48): Incorrect parameter {} greater than 255\n",
+                                c
+                            );
+                        }
+                    } else {
+                        println!("erresc(38/48): Incorrect parameter (too few or invalid)\n");
+                    }
+                }
+                0 => {} /* implemented defined (only foreground) */
+                1 => {} /* transparent */
+                3 => {} /* direct color in CMY space */
+                4 => {} /* direct color in CMYK space */
+                x => {
+                    println!("erresc(38/48): gfx attr {} unknown\n", x);
+                }
+            }
+        } else {
+            println!("unknown color glyph attr");
+        }
+        color
+    }
+
     fn set_glyph_attr(&mut self, params: &Params) {
         let prop = &mut self.term.c.glyph.prop;
 
@@ -47,7 +110,8 @@ impl<'a> Performer<'a> {
             return;
         }
 
-        for param in params.iter() {
+        let mut params = params.iter();
+        while let Some(param) = params.next() {
             match param[0] {
                 0 => prop.reset(),
                 1 => prop.attr.insert(GlyphAttr::BOLD),
@@ -66,10 +130,14 @@ impl<'a> Performer<'a> {
                 28 => prop.attr.remove(GlyphAttr::INVISIBLE),
                 29 => prop.attr.remove(GlyphAttr::STRUCK),
                 30..=37 => prop.fg = (param[0] - 30) as usize,
-                38 => (), // FIXME
+                38 => {
+                    prop.fg = Self::defcolor(&mut params);
+                }
                 39 => prop.reset_fg(),
                 40..=47 => prop.bg = (param[0] - 40) as usize,
-                48 => (), // FIXME
+                48 => {
+                    prop.bg = Self::defcolor(&mut params);
+                }
                 49 => prop.reset_bg(),
                 90..=97 => prop.fg = (param[0] - 90 + 8) as usize,
                 100..=107 => prop.bg = (param[0] - 100 + 8) as usize,
@@ -243,6 +311,8 @@ impl<'a> Perform for Performer<'a> {
             (b'c', None) =>
             // RIS -- Reset to initial state
             {
+                win.reset_colors();
+                // reset title...
                 term.reset()
             } // FIXME: reset title and etc.
             (b'0', Some(b'(')) => term.charset.setup(CharsetIndex::G0, Charset::Graphic0),

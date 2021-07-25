@@ -34,6 +34,8 @@ pub struct Win {
 
     dpy: x11::Display,
     win: x11::Window,
+    vis: x11::Visual,
+    cmap: x11::Colormap,
     scr: c_int,
     buf: x11::Pixmap,
     gc: x11::GC,
@@ -72,11 +74,14 @@ impl Win {
         let (width, height) = (cols * cw, rows * ch);
 
         let cmap = x11::XDefaultColormap(dpy, scr);
-        let mut colors = Vec::with_capacity(COLOR_NAMES.len());
-        for &name in COLOR_NAMES {
-            let color = x11::XftColorAllocName(dpy, vis, cmap, name);
-            colors.push(color);
+        let mut colors = Vec::with_capacity(257); //COLOR_NAMES.len());
+        for i in 0..=255 {
+            colors.push(Self::xloadcolor(dpy, vis, cmap, i, None));
         }
+        // cursor
+        colors.push(Self::xloadcolor(dpy, vis, cmap, 256, Some("#cccccc")));
+        // reverse cursor
+        colors.push(Self::xloadcolor(dpy, vis, cmap, 257, Some("#555555")));
 
         let depth = x11::XDefaultDepth(dpy, scr);
         let attributes_mask = x11::CW_BACK_PIXEL | x11::CW_COLOR_MAP | x11::CW_EVENT_MASK;
@@ -147,6 +152,8 @@ impl Win {
 
             dpy,
             win,
+            vis,
+            cmap,
             scr,
 
             gc,
@@ -161,6 +168,85 @@ impl Win {
             wm_protocols,
             wm_delete_window,
         })
+    }
+
+    pub fn reset_colors(&mut self) {
+        for color in self.colors.drain(..) {
+            unsafe {
+                // All of the colors in self.colors were allocated by Xft.
+                x11::XftColorFree(self.dpy, self.vis, self.cmap, color);
+            }
+        }
+        for i in 0..=255 {
+            self.colors
+                .push(Self::xloadcolor(self.dpy, self.vis, self.cmap, i, None));
+        }
+        // cursor
+        self.colors.push(Self::xloadcolor(
+            self.dpy,
+            self.vis,
+            self.cmap,
+            256,
+            Some("#cccccc"),
+        ));
+        // reverse cursor
+        self.colors.push(Self::xloadcolor(
+            self.dpy,
+            self.vis,
+            self.cmap,
+            257,
+            Some("#555555"),
+        ));
+    }
+
+    fn sixd_to_16bit(x: u16) -> u16 {
+        if x == 0 {
+            0
+        } else {
+            0x3737 + 0x2828 * x
+        }
+    }
+
+    fn xloadcolor(
+        dpy: x11::Display,
+        vis: x11::Visual,
+        cmap: x11::Colormap,
+        i: u16,
+        name: Option<&str>,
+    ) -> x11::XftColor {
+        let mut color = x11::XRenderColor {
+            red: 0,
+            blue: 0,
+            green: 0,
+            alpha: 0xffff,
+        };
+
+        if let Some(name) = name {
+            x11::XftColorAllocName(dpy, vis, cmap, name)
+        } else if (16..=255).contains(&i) {
+            /* 256 color */
+            if i < 6 * 6 * 6 + 16 {
+                /* same colors as xterm */
+                color.red = Self::sixd_to_16bit(((i - 16) / 36) % 6);
+                color.green = Self::sixd_to_16bit(((i - 16) / 6) % 6);
+                color.blue = Self::sixd_to_16bit((i - 16) % 6);
+            } else {
+                /* greyscale */
+                color.red = 0x0808 + 0x0a0a * (i - (6 * 6 * 6 + 16));
+                color.green = color.red;
+                color.blue = color.red;
+            }
+            x11::XftColorAllocValue(dpy, vis, cmap, &color)
+        } else {
+            x11::XftColorAllocName(
+                dpy,
+                vis,
+                cmap,
+                COLOR_NAMES
+                    .get(i as usize)
+                    .expect("Color index out of range!"),
+            )
+        }
     }
 
     pub fn fd(&self) -> RawFd {
@@ -427,22 +513,42 @@ impl Win {
         }
     }
 
+    fn to_truecolor(&self, col: usize) -> x11::XftColor {
+        let colfg = x11::XRenderColor {
+            alpha: 0xffff,
+            red: ((col & 0xff0000) >> 8) as u16,
+            green: (col & 0xff00) as u16,
+            blue: ((col & 0xff) << 8) as u16,
+        };
+        x11::XftColorAllocValue(self.dpy, self.vis, self.cmap, &colfg)
+    }
+
     fn draw_cells(&self, cs: &[char], prop: GlyphProp, xp: usize, yp: usize) {
         let GlyphProp { mut fg, bg, attr } = prop;
         if attr.contains(GlyphAttr::BOLD) && fg < 8 {
             fg += 8;
         }
 
-        let fg = &self.colors[fg];
-        let bg = &self.colors[bg];
+        let fg = if fg & (1 << 24) > 0 {
+            // truecolor
+            self.to_truecolor(fg)
+        } else {
+            self.colors[fg]
+        };
+        let bg = if bg & (1 << 24) > 0 {
+            // truecolor
+            self.to_truecolor(bg)
+        } else {
+            self.colors[bg]
+        };
         let font = self.font.get(attr);
 
-        x11::XftDrawRect(self.draw, bg, xp, yp, cs.len() * self.cw, self.ch);
+        x11::XftDrawRect(self.draw, &bg, xp, yp, cs.len() * self.cw, self.ch);
         let idx = cs
             .iter()
             .map(|&c| x11::XftCharIndex(self.dpy, font, c))
             .collect::<Vec<u32>>();
-        x11::XftDrawGlyphs(self.draw, fg, font, xp, yp + self.ca, &idx);
+        x11::XftDrawGlyphs(self.draw, &fg, font, xp, yp + self.ca, &idx);
     }
 
     fn draw_line(&mut self, term: &mut Term, y: usize) {
