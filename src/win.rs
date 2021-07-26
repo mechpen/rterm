@@ -1,5 +1,5 @@
 use crate::app::app_exit;
-use crate::color::{bg_color, COLOR_NAMES};
+use crate::color::{BG_COLOR, BG_COLOR_NAME, FG_COLOR_NAME};
 use crate::font::Font;
 use crate::glyph::{GlyphAttr, GlyphProp};
 use crate::keymap::map_key;
@@ -8,7 +8,7 @@ use crate::snap::Snap;
 use crate::term::Term;
 use crate::utils::term_decode;
 use crate::x11_wrapper as x11;
-use crate::Result;
+use crate::{Error, Result};
 use bitflags::bitflags;
 use std::os::raw::*;
 use std::os::unix::io::RawFd;
@@ -52,6 +52,8 @@ pub struct Win {
 
     wm_protocols: x11::Atom,
     wm_delete_window: x11::Atom,
+    netwmname: x11::Atom,
+    netwmiconname: x11::Atom,
 }
 
 impl Win {
@@ -76,18 +78,36 @@ impl Win {
         let cmap = x11::XDefaultColormap(dpy, scr);
         let mut colors = Vec::with_capacity(257); //COLOR_NAMES.len());
         for i in 0..=255 {
-            colors.push(Self::xloadcolor(dpy, vis, cmap, i, None));
+            colors.push(
+                x11::xloadcolor(dpy, vis, cmap, i, None).expect("Failed to load a default color!"),
+            );
         }
         // cursor
-        colors.push(Self::xloadcolor(dpy, vis, cmap, 256, Some("#cccccc")));
+        colors.push(
+            x11::xloadcolor(dpy, vis, cmap, 256, Some("#cccccc"))
+                .expect("Failed to load a default color!"),
+        );
         // reverse cursor
-        colors.push(Self::xloadcolor(dpy, vis, cmap, 257, Some("#555555")));
+        colors.push(
+            x11::xloadcolor(dpy, vis, cmap, 257, Some("#555555"))
+                .expect("Failed to load a default color!"),
+        );
+        // foreground
+        colors.push(
+            x11::xloadcolor(dpy, vis, cmap, 258, Some(FG_COLOR_NAME))
+                .expect("Failed to load a default color!"),
+        );
+        // background
+        colors.push(
+            x11::xloadcolor(dpy, vis, cmap, 259, Some(BG_COLOR_NAME))
+                .expect("Failed to load a default color!"),
+        );
 
         let depth = x11::XDefaultDepth(dpy, scr);
         let attributes_mask = x11::CW_BACK_PIXEL | x11::CW_COLOR_MAP | x11::CW_EVENT_MASK;
         let mut attributes: x11::XSetWindowAttributes = x11::zeroed();
         attributes.colormap = cmap;
-        attributes.background_pixel = colors[bg_color()].pixel;
+        attributes.background_pixel = colors[BG_COLOR].pixel;
         attributes.event_mask = x11::KEY_PRESS_MASK
             | x11::EXPOSURE_MASK
             | x11::VISIBILITY_CHANGE_MASK
@@ -141,6 +161,8 @@ impl Win {
                 break;
             }
         }
+        let netwmname = x11::XInternAtom(dpy, "_NET_WM_NAME", x11::False);
+        let netwmiconname = x11::XInternAtom(dpy, "_NET_WM_ICON_NAME", x11::False);
 
         Ok(Win {
             visible: true,
@@ -167,7 +189,45 @@ impl Win {
 
             wm_protocols,
             wm_delete_window,
+            netwmname,
+            netwmiconname,
         })
+    }
+
+    pub fn num_colors(&self) -> usize {
+        self.colors.len()
+    }
+
+    pub fn get_color_osc(&self, idx: usize) -> Result<String> {
+        if let Some(col) = self.colors.get(idx) {
+            Ok(format!(
+                "rgb:{:04x}/{:04x}/{:04x}",
+                col.color.red, col.color.green, col.color.blue
+            ))
+        } else {
+            Err(Error {
+                msg: "Color index to large.".into(),
+            })
+        }
+    }
+
+    pub fn setcolor(&mut self, idx: u16, name: Option<&str>) -> Result<()> {
+        if idx as usize >= self.colors.len() {
+            return Err(Error {
+                msg: format!(
+                    "setcolor: color index {} to large, max {}",
+                    idx,
+                    self.colors.len()
+                ),
+            });
+        }
+        let color = x11::xloadcolor(self.dpy, self.vis, self.cmap, idx, name)?;
+        self.colors.push(color);
+        let color = self.colors.swap_remove(idx as usize);
+        unsafe {
+            x11::XftColorFree(self.dpy, self.vis, self.cmap, color);
+        }
+        Ok(())
     }
 
     pub fn reset_colors(&mut self) {
@@ -178,75 +238,36 @@ impl Win {
             }
         }
         for i in 0..=255 {
-            self.colors
-                .push(Self::xloadcolor(self.dpy, self.vis, self.cmap, i, None));
+            if let Ok(color) = x11::xloadcolor(self.dpy, self.vis, self.cmap, i, None) {
+                self.colors.push(color);
+            }
         }
         // cursor
-        self.colors.push(Self::xloadcolor(
-            self.dpy,
-            self.vis,
-            self.cmap,
-            256,
-            Some("#cccccc"),
-        ));
+        if let Ok(color) = x11::xloadcolor(self.dpy, self.vis, self.cmap, 256, Some("#cccccc")) {
+            self.colors.push(color);
+        }
         // reverse cursor
-        self.colors.push(Self::xloadcolor(
-            self.dpy,
-            self.vis,
-            self.cmap,
-            257,
-            Some("#555555"),
-        ));
-    }
-
-    fn sixd_to_16bit(x: u16) -> u16 {
-        if x == 0 {
-            0
-        } else {
-            0x3737 + 0x2828 * x
+        if let Ok(color) = x11::xloadcolor(self.dpy, self.vis, self.cmap, 257, Some("#555555")) {
+            self.colors.push(color);
+        }
+        // foreground
+        if let Ok(color) = x11::xloadcolor(self.dpy, self.vis, self.cmap, 258, Some(FG_COLOR_NAME))
+        {
+            self.colors.push(color);
+        }
+        // background
+        if let Ok(color) = x11::xloadcolor(self.dpy, self.vis, self.cmap, 259, Some(BG_COLOR_NAME))
+        {
+            self.colors.push(color);
         }
     }
 
-    fn xloadcolor(
-        dpy: x11::Display,
-        vis: x11::Visual,
-        cmap: x11::Colormap,
-        i: u16,
-        name: Option<&str>,
-    ) -> x11::XftColor {
-        let mut color = x11::XRenderColor {
-            red: 0,
-            blue: 0,
-            green: 0,
-            alpha: 0xffff,
-        };
+    pub fn seticontitle(&self, title: &str) {
+        x11::xseticontitle(self.dpy, self.win, self.netwmiconname, title);
+    }
 
-        if let Some(name) = name {
-            x11::XftColorAllocName(dpy, vis, cmap, name)
-        } else if (16..=255).contains(&i) {
-            /* 256 color */
-            if i < 6 * 6 * 6 + 16 {
-                /* same colors as xterm */
-                color.red = Self::sixd_to_16bit(((i - 16) / 36) % 6);
-                color.green = Self::sixd_to_16bit(((i - 16) / 6) % 6);
-                color.blue = Self::sixd_to_16bit((i - 16) % 6);
-            } else {
-                /* greyscale */
-                color.red = 0x0808 + 0x0a0a * (i - (6 * 6 * 6 + 16));
-                color.green = color.red;
-                color.blue = color.red;
-            }
-            x11::XftColorAllocValue(dpy, vis, cmap, &color)
-        } else {
-            x11::XftColorAllocName(
-                dpy,
-                vis,
-                cmap,
-                COLOR_NAMES
-                    .get(i as usize)
-                    .expect("Color index out of range!"),
-            )
-        }
+    pub fn settitle(&self, title: &str) {
+        x11::xsettitle(self.dpy, self.win, self.netwmname, title);
     }
 
     pub fn fd(&self) -> RawFd {
@@ -284,6 +305,13 @@ impl Win {
         }
 
         self.finish_draw(term.cols, term.rows);
+    }
+
+    pub fn redraw(&mut self, term: &mut Term) {
+        for y in 0..term.rows {
+            term.dirty[y] = true;
+        }
+        self.draw(term);
     }
 
     pub fn process_input(&mut self, term: &mut Term) {
@@ -521,6 +549,7 @@ impl Win {
             blue: ((col & 0xff) << 8) as u16,
         };
         x11::XftColorAllocValue(self.dpy, self.vis, self.cmap, &colfg)
+            .expect("Failed to alloc truecolor")
     }
 
     fn draw_cells(&self, cs: &[char], prop: GlyphProp, xp: usize, yp: usize) {

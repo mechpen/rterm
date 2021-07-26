@@ -1,4 +1,5 @@
 use crate::charset::{Charset, CharsetIndex};
+use crate::color::{BG_COLOR, BG_COLOR_NAME, FG_COLOR, FG_COLOR_NAME};
 use crate::glyph::GlyphAttr;
 use crate::term::{Term, TermMode};
 use crate::win::{Win, WinMode};
@@ -216,6 +217,20 @@ impl<'a> Performer<'a> {
             }
         }
     }
+
+    fn send_color_osc(&mut self, idx: usize, leader: &str, bell_terminated: bool) {
+        let mut v: Vec<u8> = vec![0x1b];
+        v.extend_from_slice(
+            format!("]{};{}", leader, self.win.get_color_osc(idx).unwrap()).as_bytes(),
+        );
+        if bell_terminated {
+            v.push(0x07);
+        } else {
+            v.push(0x1b);
+            v.push(b'\\');
+        }
+        self.term.pty.write(v);
+    }
 }
 
 impl<'a> Perform for Performer<'a> {
@@ -343,6 +358,161 @@ impl<'a> Perform for Performer<'a> {
                 // ST -- String Terminator
                 {}
             _ => println!("unknown esc {:?} {}", intermediate, byte as char),
+        }
+    }
+
+    fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
+        if params.is_empty() {
+            return;
+        }
+        match params[0] {
+            b"0" => {
+                if let Some(title) = params.get(1) {
+                    self.win.settitle(&String::from_utf8_lossy(title));
+                    self.win.seticontitle(&String::from_utf8_lossy(title));
+                }
+            }
+            b"1" => {
+                if let Some(title) = params.get(1) {
+                    self.win.seticontitle(&String::from_utf8_lossy(title));
+                }
+            }
+            b"2" => {
+                if let Some(title) = params.get(1) {
+                    self.win.settitle(&String::from_utf8_lossy(title));
+                }
+            }
+            b"52" => {} // FIXME
+            b"4" => {
+                /* color set, color index;spec */
+                let mut params = params.iter();
+                params.next(); // skip the param "4"
+                while let Some(col_idx) = params.next() {
+                    if let Some(col_name) = params.next() {
+                        if let Ok(idx) = String::from_utf8_lossy(col_idx).parse::<u16>() {
+                            if (idx as usize) < self.win.num_colors() {
+                                let name = String::from_utf8_lossy(col_name);
+                                if name == "?" {
+                                    self.send_color_osc(
+                                        idx as usize,
+                                        &format!("4;{}", idx),
+                                        bell_terminated,
+                                    );
+                                } else if let Err(err) = self.win.setcolor(idx, Some(&name)) {
+                                    println!("OSC 4 error: {}", err.msg);
+                                }
+                            } else {
+                                println!(
+                                    "OSC 4, color index to large, max is {}",
+                                    self.win.num_colors()
+                                );
+                            }
+                        } else {
+                            println!("OSC 4, color index not a number");
+                        }
+                    } else {
+                        println!("OSC 4, missing color name");
+                        break;
+                    }
+                }
+                self.win.redraw(&mut self.term);
+            }
+            b"10" => {
+                /* set foreground color */
+                let mut params = params.iter();
+                params.next(); // skip the consumed param
+                if let Some(col_name) = params.next() {
+                    if params.next().is_none() {
+                        let name = String::from_utf8_lossy(col_name);
+                        if name == "?" {
+                            self.send_color_osc(FG_COLOR, "10", bell_terminated);
+                        } else if let Err(err) = self.win.setcolor(FG_COLOR as u16, Some(&name)) {
+                            println!("OSC 10 error: {}", err.msg);
+                        }
+                    } else {
+                        println!("OSC 10, to many parameters");
+                    }
+                } else {
+                    println!("OSC 10, missing color name");
+                }
+                self.win.redraw(&mut self.term);
+            }
+            b"11" => {
+                /* set background color */
+                let mut params = params.iter();
+                params.next(); // skip the consumed param
+                if let Some(col_name) = params.next() {
+                    if params.next().is_none() {
+                        let name = String::from_utf8_lossy(col_name);
+                        if name == "?" {
+                            self.send_color_osc(BG_COLOR, "11", bell_terminated);
+                        } else if let Err(err) = self.win.setcolor(BG_COLOR as u16, Some(&name)) {
+                            println!("OSC 11 error: {}", err.msg);
+                        }
+                    } else {
+                        println!("OSC 11, to many parameters");
+                    }
+                } else {
+                    println!("OSC 11, missing color name");
+                }
+                self.win.redraw(&mut self.term);
+            }
+            b"104" => {
+                /* color reset, optional color index */
+                let mut params = params.iter();
+                params.next(); // skip the param "104"
+                let mut cnt = 0;
+                for col_idx in params {
+                    cnt += 1;
+                    if let Ok(idx) = String::from_utf8_lossy(col_idx).parse::<u16>() {
+                        if (idx as usize) < self.win.num_colors() {
+                            if let Err(err) = self.win.setcolor(idx, None) {
+                                println!("OSC 104 error: {}", err.msg);
+                            }
+                        } else {
+                            println!(
+                                "OSC 104, color index to large, max is {}",
+                                self.win.num_colors()
+                            );
+                        }
+                    } else {
+                        println!("OSC 104, color index not a number");
+                    }
+                }
+                if cnt == 0 {
+                    self.win.reset_colors();
+                }
+                self.win.redraw(&mut self.term);
+            }
+            b"110" => {
+                /* foreground color reset */
+                let mut params = params.iter();
+                params.next(); // skip the consumed param
+                if params.next().is_none() {
+                    if let Err(err) = self.win.setcolor(FG_COLOR as u16, Some(FG_COLOR_NAME)) {
+                        println!("OSC 110 error: {}", err.msg);
+                    }
+                } else {
+                    println!("OSC 110 takes no parameters");
+                }
+                self.win.redraw(&mut self.term);
+            }
+            b"111" => {
+                /* background color reset */
+                let mut params = params.iter();
+                params.next(); // skip the consumed param
+                if params.next().is_none() {
+                    if let Err(err) = self.win.setcolor(BG_COLOR as u16, Some(BG_COLOR_NAME)) {
+                        println!("OSC 111 error: {}", err.msg);
+                    }
+                } else {
+                    println!("OSC 111 takes no parameters");
+                }
+                self.win.redraw(&mut self.term);
+            }
+            _ => {
+                println!("Unknown OSC command {}", String::from_utf8_lossy(params[0]));
+            }
         }
     }
 

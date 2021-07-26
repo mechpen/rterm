@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
-use crate::Result;
+use crate::color::COLOR_NAMES;
+use crate::{Error, Result};
 use fontconfig::fontconfig as fc;
 use std::convert::TryInto;
 use std::ffi::CStr;
@@ -29,7 +30,10 @@ pub use xlib::True;
 pub use xlib::Window;
 pub use xlib::XEvent;
 pub use xlib::XGCValues;
+pub use xlib::XICCEncodingStyle;
 pub use xlib::XSetWindowAttributes;
+pub use xlib::XTextProperty;
+pub use xlib::XUTF8StringStyle;
 pub use xlib::GC;
 
 pub use xlib::GCGraphicsExposures as GC_GRAPHICS_EXPOSURES;
@@ -180,9 +184,12 @@ pub fn XCreateWindow(
 }
 
 pub fn XStoreName(dpy: Display, win: Window, name: &str) {
-    let name = CString::new(name).unwrap();
-    unsafe {
-        xlib::XStoreName(dpy, win, name.as_ptr() as *mut _);
+    if let Ok(name) = CString::new(name) {
+        unsafe {
+            xlib::XStoreName(dpy, win, name.as_ptr() as *mut _);
+        }
+    } else {
+        println!("XStoreName {} not a valid c_str.", name);
     }
 }
 
@@ -451,12 +458,22 @@ pub fn font_ascent(font: XftFont) -> usize {
     unsafe { cast((*font).ascent) }
 }
 
-pub fn XftColorAllocName(dpy: Display, vis: Visual, cmap: Colormap, name: &str) -> XftColor {
+pub fn XftColorAllocName(
+    dpy: Display,
+    vis: Visual,
+    cmap: Colormap,
+    name_in: &str,
+) -> Result<XftColor> {
     let mut col = mem::MaybeUninit::uninit();
-    let name = CString::new(name).unwrap();
+    let name = CString::new(name_in).unwrap();
     unsafe {
-        xft::XftColorAllocName(dpy, vis, cmap, name.as_ptr(), col.as_mut_ptr());
-        col.assume_init()
+        if xft::XftColorAllocName(dpy, vis, cmap, name.as_ptr(), col.as_mut_ptr()) == 1 {
+            Ok(col.assume_init())
+        } else {
+            Err(Error {
+                msg: format!("Invalid color name: {}", name_in),
+            })
+        }
     }
 }
 
@@ -465,11 +482,16 @@ pub fn XftColorAllocValue(
     vis: Visual,
     cmap: Colormap,
     renderColor: &XRenderColor,
-) -> XftColor {
+) -> Result<XftColor> {
     let mut col = mem::MaybeUninit::uninit();
     unsafe {
-        xft::XftColorAllocValue(dpy, vis, cmap, renderColor, col.as_mut_ptr());
-        col.assume_init()
+        if xft::XftColorAllocValue(dpy, vis, cmap, renderColor, col.as_mut_ptr()) == 1 {
+            Ok(col.assume_init())
+        } else {
+            Err(Error {
+                msg: "Invalid color value".to_string(),
+            })
+        }
     }
 }
 
@@ -532,5 +554,120 @@ pub fn FcPatternDel(pattern: FcPattern, object: &CStr) {
 pub fn FcPatternAddInteger(pattern: FcPattern, object: &CStr, i: c_int) {
     unsafe {
         fc::FcPatternAddInteger(pattern as _, object.as_ptr(), i);
+    }
+}
+
+pub fn xseticontitle(dpy: Display, win: Window, netwmiconname: Atom, title: &str) {
+    if let Ok(p) = CString::new(title) {
+        let mut pt = p.into_bytes_with_nul();
+        let mut p = pt.as_mut_ptr() as *mut c_char;
+        unsafe {
+            let mut prop = mem::MaybeUninit::uninit();
+            let r = xlib::Xutf8TextListToTextProperty(
+                dpy,
+                &mut p,
+                1,
+                XUTF8StringStyle,
+                prop.as_mut_ptr(),
+            );
+            if r == xlib::Success as i32 {
+                let mut prop = prop.assume_init();
+                let prop_ptr = &mut prop as *mut XTextProperty;
+                xlib::XSetWMIconName(dpy, win, prop_ptr);
+                xlib::XSetTextProperty(dpy, win, prop_ptr, netwmiconname);
+                xlib::XFree(prop.value as *mut c_void);
+            } else {
+                match r {
+                    // XLocalNotSupported
+                    -2 => println!("error setting icon title '{}': Locale not supported", title),
+                    // XConverterNotFound
+                    -3 => println!("error setting icon title '{}': Converter Not Found", title),
+                    _ => println!("error setting icon title: '{}': unknown code: {}", title, r),
+                }
+            }
+        }
+    } else {
+        println!("xseticontitle: {} not a valid c_str.", title);
+    }
+}
+
+pub fn xsettitle(dpy: Display, win: Window, netwmname: Atom, title: &str) {
+    if let Ok(p) = CString::new(title) {
+        let mut pt = p.into_bytes_with_nul();
+        let mut p = pt.as_mut_ptr() as *mut c_char;
+        unsafe {
+            let mut prop = mem::MaybeUninit::uninit();
+            let r = xlib::Xutf8TextListToTextProperty(
+                dpy,
+                &mut p,
+                1,
+                XUTF8StringStyle,
+                prop.as_mut_ptr(),
+            );
+            if r == xlib::Success as i32 {
+                let mut prop = prop.assume_init();
+                let prop_ptr = &mut prop as *mut XTextProperty;
+                xlib::XSetWMName(dpy, win, prop_ptr);
+                xlib::XSetTextProperty(dpy, win, prop_ptr, netwmname);
+                xlib::XFree(prop.value as *mut c_void);
+            } else {
+                match r {
+                    // XLocalNotSupported
+                    -2 => println!("error setting title '{}': Locale not supported", title),
+                    // XConverterNotFound
+                    -3 => println!("error setting title '{}': Converter Not Found", title),
+                    _ => println!("error setting title: '{}': unknown code: {}", title, r),
+                }
+            }
+        }
+    } else {
+        println!("xsettitle: {} not a valid c_str.", title);
+    }
+}
+
+fn sixd_to_16bit(x: u16) -> u16 {
+    if x == 0 {
+        0
+    } else {
+        0x3737 + 0x2828 * x
+    }
+}
+
+pub fn xloadcolor(
+    dpy: Display,
+    vis: Visual,
+    cmap: Colormap,
+    idx: u16,
+    name: Option<&str>,
+) -> Result<XftColor> {
+    if let Some(name) = name {
+        XftColorAllocName(dpy, vis, cmap, name)
+    } else if (16..=255).contains(&idx) {
+        let mut color = XRenderColor {
+            red: 0,
+            blue: 0,
+            green: 0,
+            alpha: 0xffff,
+        };
+
+        /* 256 color */
+        if idx < 6 * 6 * 6 + 16 {
+            /* same colors as xterm */
+            color.red = sixd_to_16bit(((idx - 16) / 36) % 6);
+            color.green = sixd_to_16bit(((idx - 16) / 6) % 6);
+            color.blue = sixd_to_16bit((idx - 16) % 6);
+        } else {
+            /* greyscale */
+            color.red = 0x0808 + 0x0a0a * (idx - (6 * 6 * 6 + 16));
+            color.green = color.red;
+            color.blue = color.red;
+        }
+        XftColorAllocValue(dpy, vis, cmap, &color)
+    } else if let Some(col) = COLOR_NAMES.get(idx as usize) {
+        XftColorAllocName(dpy, vis, cmap, col)
+    } else {
+        Err(Error {
+            msg: "Invalid index/name in xloadcolor call!".into(),
+        })
     }
 }

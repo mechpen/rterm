@@ -1,4 +1,4 @@
-use crate::color::{bg_color, fg_color};
+use crate::color::{BG_COLOR, FG_COLOR};
 use bitflags::bitflags;
 use std::mem;
 
@@ -38,17 +38,17 @@ impl GlyphProp {
     }
 
     pub fn reset(&mut self) {
-        self.fg = fg_color();
-        self.bg = bg_color();
+        self.fg = FG_COLOR;
+        self.bg = BG_COLOR;
         self.attr -= GlyphAttr::FONT_MASK;
     }
 
     pub fn reset_fg(&mut self) {
-        self.fg = fg_color();
+        self.fg = FG_COLOR;
     }
 
     pub fn reset_bg(&mut self) {
-        self.bg = bg_color();
+        self.bg = BG_COLOR;
     }
 
     pub fn resolve(&self, reverse: bool) -> Self {
@@ -91,5 +91,5 @@ impl Glyph {
 }
 
 pub fn blank_glyph() -> Glyph {
-    Glyph::new(' ', fg_color(), bg_color(), GlyphAttr::empty())
+    Glyph::new(' ', FG_COLOR, BG_COLOR, GlyphAttr::empty())
 }

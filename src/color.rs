@@ -1,5 +1,7 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
+// This covers the initial 16 colors, it also support 256 and true color modes
+// and a palette of of the colors from 16-255 are generated (see Win::new() in
+// win.rs).  The foreground/background and cursor get there own 'slots' after
+// the 256 color palette.
 pub const COLOR_NAMES: &[&str] = &[
     /* 8 normal colors */
     "black", "red3", "green3", "yellow3", "blue2", "magenta3", "cyan3", "gray90",
@@ -7,13 +9,7 @@ pub const COLOR_NAMES: &[&str] = &[
     "gray50", "red", "green", "yellow", "#5c5cff", "magenta", "cyan", "white",
 ];
 
-static FG_COLOR: AtomicUsize = AtomicUsize::new(7);
-static BG_COLOR: AtomicUsize = AtomicUsize::new(0);
-
-pub fn fg_color() -> usize {
-    FG_COLOR.load(Ordering::Relaxed)
-}
-
-pub fn bg_color() -> usize {
-    BG_COLOR.load(Ordering::Relaxed)
-}
+pub const FG_COLOR: usize = 258;
+pub const BG_COLOR: usize = 259;
+pub const FG_COLOR_NAME: &str = "grey90";
+pub const BG_COLOR_NAME: &str = "black";
