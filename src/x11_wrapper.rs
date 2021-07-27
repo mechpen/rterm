@@ -49,6 +49,7 @@ pub use xlib::ButtonPressMask as BUTTON_PRESS_MASK;
 pub use xlib::ButtonReleaseMask as BUTTON_RELEASE_MASK;
 pub use xlib::ExposureMask as EXPOSURE_MASK;
 pub use xlib::KeyPressMask as KEY_PRESS_MASK;
+pub use xlib::PointerMotionMask as POINTER_MOTION_MASK;
 pub use xlib::StructureNotifyMask as STRUCTURE_NOTIFY_MASK;
 pub use xlib::VisibilityChangeMask as VISIBILITY_CHANGE_MASK;
 
@@ -57,8 +58,12 @@ pub use xlib::KeyRelease as KEY_RELEASE;
 pub use xlib::Mod1Mask as MOD1_MASK;
 pub use xlib::XKeyEvent;
 
+pub use xlib::Button1;
 pub use xlib::ButtonPress as BUTTON_PRESS;
 pub use xlib::ButtonRelease as BUTTON_RELEASE;
+pub use xlib::ControlMask;
+pub use xlib::Mod4Mask;
+pub use xlib::ShiftMask;
 pub use xlib::XButtonEvent;
 
 pub use xlib::MotionNotify as MOTION_NOTIFY;
@@ -421,6 +426,22 @@ pub fn XConvertSelection(
 ) {
     unsafe {
         xlib::XConvertSelection(dpy, selection, target, property, requester, time);
+    }
+}
+
+pub fn XChangeWindowAttributes(
+    dpy: Display,
+    win: Window,
+    event_mask: u64,
+    mut attributes: XSetWindowAttributes,
+) {
+    unsafe {
+        xlib::XChangeWindowAttributes(
+            dpy,
+            win,
+            event_mask,
+            &mut attributes as *mut XSetWindowAttributes,
+        );
     }
 }
 

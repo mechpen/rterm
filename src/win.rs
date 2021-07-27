@@ -25,8 +25,20 @@ bitflags! {
         const BLINK       = 1 << 5;
         const NUMLOCK     = 1 << 6;
         const ECHO        = 1 << 7;
+        const MOUSEBTN    = 1 << 8;
+        const MOUSEMOTION = 1 << 9;
+        const MOUSESGR    = 1 << 10;
+        const MOUSEX10    = 1 << 11;
+        const MOUSEMANY   = 1 << 12;
+        const MOUSE       = Self::MOUSEBTN.bits|Self::MOUSEMOTION.bits|Self::MOUSEX10.bits|Self::MOUSEMANY.bits;
+        const FOCUS       = 1 << 13;
     }
 }
+
+// FIXME, this can only be 0 until impemented everywhere.
+const BORDERPX: u16 = 0;
+
+const FORCEMOUSEMOD: u32 = x11::ShiftMask;
 
 pub struct Win {
     visible: bool,
@@ -45,6 +57,11 @@ pub struct Win {
     cw: usize,
     ch: usize,
     ca: usize,
+    width: usize,
+    height: usize,
+    old_mouse_x: usize,
+    old_mouse_y: usize,
+    old_mouse_button: u32,
 
     sel_type: x11::Atom,
     sel_snap: Snap,
@@ -54,6 +71,7 @@ pub struct Win {
     wm_delete_window: x11::Atom,
     netwmname: x11::Atom,
     netwmiconname: x11::Atom,
+    attributes: x11::XSetWindowAttributes,
 }
 
 impl Win {
@@ -186,12 +204,27 @@ impl Win {
             cw,
             ch,
             ca,
+            width,
+            height,
+            old_mouse_x: 0,
+            old_mouse_y: 0,
+            old_mouse_button: 0,
 
             wm_protocols,
             wm_delete_window,
             netwmname,
             netwmiconname,
+            attributes,
         })
+    }
+
+    pub fn set_pointer_motion(&mut self, motion: bool) {
+        if motion {
+            self.attributes.event_mask |= x11::POINTER_MOTION_MASK;
+        } else {
+            self.attributes.event_mask &= !x11::POINTER_MOTION_MASK;
+        }
+        x11::XChangeWindowAttributes(self.dpy, self.win, x11::CW_EVENT_MASK, self.attributes);
     }
 
     pub fn num_colors(&self) -> usize {
@@ -340,6 +373,111 @@ impl Win {
         }
     }
 
+    fn limit<T: Ord>(x: T, min: T, max: T) -> T {
+        if x < min {
+            min
+        } else if x > max {
+            max
+        } else {
+            x
+        }
+    }
+
+    fn evcol(&self, e: &x11::XEvent) -> usize {
+        let mut x = unsafe { e.button.x - BORDERPX as i32 };
+        x = Self::limit(x, 0, (self.width - 1) as i32);
+        x as usize / self.cw
+    }
+
+    fn evrow(&self, e: &x11::XEvent) -> usize {
+        let mut y = unsafe { e.button.y - BORDERPX as i32 };
+        y = Self::limit(y, 0, (self.height - 1) as i32);
+        y as usize / self.ch
+    }
+
+    fn mousereport(&mut self, e: x11::XEvent, term: &mut Term) {
+        let x = self.evcol(&e);
+        let y = self.evrow(&e);
+        let mut button = unsafe { e.button.button };
+        let state = unsafe { e.button.state };
+        let btype = unsafe { e.button.type_ };
+
+        /* from urxvt */
+        if btype == x11::MOTION_NOTIFY {
+            if x == self.old_mouse_x && y == self.old_mouse_y {
+                return;
+            }
+            if !self.mode.contains(WinMode::MOUSEMOTION) && !self.mode.contains(WinMode::MOUSEMANY)
+            {
+                return;
+            }
+            /* MOUSE_MOTION: no reporting if no button is pressed */
+            if self.mode.contains(WinMode::MOUSEMOTION) && self.old_mouse_button == 3 {
+                return;
+            }
+
+            button = self.old_mouse_button + 32;
+            self.old_mouse_x = x;
+            self.old_mouse_y = y;
+        } else {
+            if !self.mode.contains(WinMode::MOUSESGR) && btype == x11::BUTTON_RELEASE {
+                button = 3;
+            } else {
+                button -= x11::Button1;
+                if button >= 7 {
+                    button += 128 - 7;
+                } else if button >= 3 {
+                    button += 64 - 3;
+                }
+            }
+            if btype == x11::BUTTON_PRESS {
+                self.old_mouse_button = button;
+                self.old_mouse_x = x;
+                self.old_mouse_y = y;
+            } else if btype == x11::BUTTON_RELEASE {
+                self.old_mouse_button = 3;
+                /* MODE_MOUSEX10: no button release reporting */
+                if self.mode.contains(WinMode::MOUSEX10) {
+                    return;
+                }
+                if button == 64 || button == 65 {
+                    return;
+                }
+            }
+        }
+
+        if !self.mode.contains(WinMode::MOUSEX10) {
+            button += if (state & x11::ShiftMask) != 0 { 4 } else { 0 }
+                + if (state & x11::Mod4Mask) != 0 { 8 } else { 0 }
+                + if (state & x11::ControlMask) != 0 {
+                    16
+                } else {
+                    0
+                };
+        }
+
+        let buf;
+        if self.mode.contains(WinMode::MOUSESGR) {
+            buf = format!(
+                "\x1b[<{};{};{}{}",
+                button,
+                x + 1,
+                y + 1,
+                if btype == x11::BUTTON_RELEASE {
+                    'm'
+                } else {
+                    'M'
+                }
+            );
+        } else if x < 223 && y < 223 {
+            buf = format!("\x1b[M{}{}{}", 32 + button, 32 + x + 1, 32 + y + 1);
+        } else {
+            return;
+        }
+
+        self.term_write(term, buf.as_bytes());
+    }
+
     fn key_press(&mut self, xev: x11::XEvent, term: &mut Term) {
         let mut xev = xev;
         let xev: &mut x11::XKeyEvent = x11::cast_event_mut(&mut xev);
@@ -392,11 +530,11 @@ impl Win {
             return;
         }
 
-        let width = term.cols * self.cw;
-        let height = term.rows * self.ch;
+        self.width = term.cols * self.cw;
+        self.height = term.rows * self.ch;
         let depth = x11::XDefaultDepth(self.dpy, self.scr);
         x11::XFreePixmap(self.dpy, self.buf);
-        self.buf = x11::XCreatePixmap(self.dpy, self.win, width, height, depth);
+        self.buf = x11::XCreatePixmap(self.dpy, self.win, self.width, self.height, depth);
         x11::XftDrawChange(self.draw, self.buf);
     }
 
@@ -411,12 +549,22 @@ impl Win {
 
     // FIXME: select rectangle
     fn motion_notify(&mut self, xev: x11::XEvent, term: &mut Term) {
+        if self.mode.intersects(WinMode::MOUSE) && unsafe { xev.button.state & FORCEMOUSEMOD } == 0
+        {
+            self.mousereport(xev, term);
+            return;
+        }
         let xev: &x11::XMotionEvent = x11::cast_event(&xev);
         let (x, y) = self.term_point(xev.x, xev.y);
         term.extend_selection(x, y);
     }
 
     fn button_press(&mut self, xev: x11::XEvent, term: &mut Term) {
+        if self.mode.intersects(WinMode::MOUSE) && unsafe { xev.button.state & FORCEMOUSEMOD } == 0
+        {
+            self.mousereport(xev, term);
+            return;
+        }
         let xev: &x11::XButtonEvent = x11::cast_event(&xev);
         if xev.button == 1 {
             let (x, y) = self.term_point(xev.x, xev.y);
@@ -425,6 +573,11 @@ impl Win {
     }
 
     fn button_release(&mut self, xev: x11::XEvent, term: &mut Term) {
+        if self.mode.intersects(WinMode::MOUSE) && unsafe { xev.button.state & FORCEMOUSEMOD } == 0
+        {
+            self.mousereport(xev, term);
+            return;
+        }
         let xev: &x11::XButtonEvent = x11::cast_event(&xev);
         match xev.button {
             2 => self.selection_paste(),

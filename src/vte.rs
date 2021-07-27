@@ -183,6 +183,44 @@ impl<'a> Performer<'a> {
                     {
                         self.win.set_mode(WinMode::HIDE, !val)
                     }
+                    9 =>
+                    /* X10 mouse compatibility mode */
+                    {
+                        self.win.set_pointer_motion(false);
+                        self.win.set_mode(WinMode::MOUSE, false);
+                        self.win.set_mode(WinMode::MOUSEX10, val);
+                    }
+                    1000 =>
+                    /* 1000: report button press */
+                    {
+                        self.win.set_pointer_motion(false);
+                        self.win.set_mode(WinMode::MOUSE, false);
+                        self.win.set_mode(WinMode::MOUSEBTN, val);
+                    }
+                    1002 =>
+                    /* 1002: report motion on button press */
+                    {
+                        self.win.set_pointer_motion(false);
+                        self.win.set_mode(WinMode::MOUSE, false);
+                        self.win.set_mode(WinMode::MOUSEMOTION, val);
+                    }
+                    1003 =>
+                    /* 1003: enable all mouse motions */
+                    {
+                        self.win.set_pointer_motion(val);
+                        self.win.set_mode(WinMode::MOUSE, false);
+                        self.win.set_mode(WinMode::MOUSEMANY, val);
+                    }
+                    1004 =>
+                    /* 1004: send focus events to tty */
+                    {
+                        self.win.set_mode(WinMode::FOCUS, val);
+                    }
+                    1006 =>
+                    /* 1006: extended reporting mode */
+                    {
+                        self.win.set_mode(WinMode::MOUSESGR, val);
+                    }
                     1034 => self.win.set_mode(WinMode::EIGHT_BIT, val),
                     1048 => {
                         if val {
