@@ -40,6 +40,7 @@ bitflags! {
         const INSERT      = 1 << 1;
         const ORIGIN      = 1 << 2;
         const CRLF        = 1 << 3;
+        const ALTSCREEN   = 1 << 4;
     }
 }
 
@@ -58,6 +59,10 @@ pub struct Term {
     pub scroll_top: usize,
     pub scroll_bot: usize,
     pub charset: CharsetTable,
+    saved_c: Option<Cursor>,
+    saved_alt_c: Option<Cursor>,
+    // lines contains the main and alternate screens, access it through the
+    // lines() and lines_mut() functions to not have to worry about indexing.
     lines: Vec<Vec<Glyph>>,
     tabs: Vec<bool>,
     mode: TermMode,
@@ -79,6 +84,8 @@ impl Term {
             mode: TermMode::WRAP,
             tabs: Vec::new(),
             sel: Selection::new(),
+            saved_c: None,
+            saved_alt_c: None,
         };
 
         term.resize(cols, rows);
@@ -97,7 +104,8 @@ impl Term {
             self.scroll_up(0, self.c.y - rows + 1)
         }
 
-        self.lines.resize_with(rows, Vec::new);
+        // Double size to hold the main and alternate screens.
+        self.lines.resize_with(rows * 2, Vec::new);
         self.lines.shrink_to_fit();
         for line in self.lines.iter_mut() {
             line.resize(cols, blank_glyph());
@@ -133,15 +141,19 @@ impl Term {
         self.mode.set(mode, val);
     }
 
+    pub fn in_mode(&self, mode: TermMode) -> bool {
+        self.mode.contains(mode)
+    }
+
     pub fn get_glyph(&self, x: usize, y: usize) -> Glyph {
-        let mut g = self.lines[y][x];
+        let mut g = self.lines()[y][x];
         g.prop = g.prop.resolve(self.is_selected(x, y));
         g
     }
 
     pub fn get_glyph_at_cursor(&self) -> (usize, usize, Glyph) {
         let (x, y) = (self.c.x, self.c.y);
-        let mut g = self.lines[y][x];
+        let mut g = self.lines()[y][x];
         let reverse = !self.is_selected(x, y);
         g.prop = self.c.glyph.prop.resolve(reverse);
         (x, y, g)
@@ -181,7 +193,8 @@ impl Term {
         for y in yrange {
             self.dirty[y] = true;
             for x in xrange.clone() {
-                self.lines[y][x].clear(self.c.glyph);
+                let glyph = self.c.glyph;
+                self.lines_mut()[y][x].clear(glyph);
                 if self.is_selected(x, y) {
                     self.clear_selection();
                 }
@@ -210,11 +223,12 @@ impl Term {
         if n < 1 {
             return;
         }
-        let n = cmp::min(n, self.scroll_bot - orig + 1);
+        let bottom = self.scroll_bot;
+        let n = cmp::min(n, bottom - orig + 1);
 
         self.clear_lines(orig..orig + n);
-        self.set_dirty(orig + n..=self.scroll_bot);
-        self.lines[orig..=self.scroll_bot].rotate_left(n);
+        self.set_dirty(orig + n..=bottom);
+        self.lines_mut()[orig..=bottom].rotate_left(n);
 
         self.scroll_selection(orig, -(n as i32));
     }
@@ -224,11 +238,12 @@ impl Term {
         if n < 1 {
             return;
         }
-        let n = cmp::min(n, self.scroll_bot - orig + 1);
+        let bottom = self.scroll_bot;
+        let n = cmp::min(n, bottom - orig + 1);
 
-        self.set_dirty(orig..self.scroll_bot - n + 1);
-        self.clear_lines(self.scroll_bot - n + 1..=self.scroll_bot);
-        self.lines[orig..=self.scroll_bot].rotate_right(n);
+        self.set_dirty(orig..bottom - n + 1);
+        self.clear_lines(bottom - n + 1..=self.scroll_bot);
+        self.lines_mut()[orig..=bottom].rotate_right(n);
 
         self.scroll_selection(orig, n as i32);
     }
@@ -265,16 +280,20 @@ impl Term {
     }
 
     pub fn insert_blanks(&mut self, n: usize) {
-        let n = cmp::min(n, self.cols - self.c.x);
+        let (x, y) = (self.c.x, self.c.y);
+        let n = cmp::min(n, self.cols - x);
 
-        self.lines[self.c.y].copy_within(self.c.x..self.cols - n, self.c.x + n);
-        self.clear_region(self.c.x..self.c.x + n, self.c.y..=self.c.y);
+        let source = x..self.cols - n;
+        let dest = x + n;
+        self.lines_mut()[y].copy_within(source, dest);
+        self.clear_region(x..x + n, y..=y);
     }
 
     pub fn delete_chars(&mut self, n: usize) {
+        let (x, y, cols) = (self.c.x, self.c.y, self.cols);
         let n = cmp::min(n, self.cols - self.c.x);
 
-        self.lines[self.c.y].copy_within(self.c.x + n..self.cols, self.c.x);
+        self.lines_mut()[y].copy_within(x + n..cols, x);
         self.clear_region(self.cols - n..self.cols, self.c.y..=self.c.y);
     }
 
@@ -307,9 +326,11 @@ impl Term {
             return;
         }
 
+        let cols = self.cols;
         if self.c.wrap_next {
+            let y = self.c.y;
             // for wide chars, cursor is not at cols-1
-            self.lines[self.c.y][self.cols - 1]
+            self.lines_mut()[y][cols - 1]
                 .prop
                 .attr
                 .insert(GlyphAttr::WRAP);
@@ -329,15 +350,17 @@ impl Term {
             self.clear_selection();
         }
 
-        self.dirty[self.c.y] = true;
-        self.lines[self.c.y][self.c.x].prop = self.c.glyph.prop;
-        self.lines[self.c.y][self.c.x].c = c;
-        for x in self.c.x + 1..self.c.x + width {
-            self.lines[self.c.y][x].prop.attr.insert(GlyphAttr::DUMMY);
+        // x, y may have updated.
+        let (x, y) = (self.c.x, self.c.y);
+        self.dirty[y] = true;
+        self.lines_mut()[y][x].prop = self.c.glyph.prop;
+        self.lines_mut()[y][x].c = c;
+        for x2 in x + 1..x + width {
+            self.lines_mut()[y][x2].prop.attr.insert(GlyphAttr::DUMMY);
         }
 
         self.c.x += width;
-        if self.c.x == self.cols {
+        if self.c.x == cols {
             if self.mode.contains(TermMode::WRAP) {
                 self.c.x -= width;
                 self.c.wrap_next = true;
@@ -352,12 +375,31 @@ impl Term {
     }
 
     pub fn save_cursor(&mut self) {
-        self.c.save_pos();
+        if self.mode.contains(TermMode::ALTSCREEN) {
+            self.saved_alt_c = Some(self.c);
+        } else {
+            self.saved_c = Some(self.c);
+        }
     }
 
     pub fn load_cursor(&mut self) {
-        self.c.load_pos();
-        self.move_to(self.c.x, self.c.y);
+        let saved = if self.mode.contains(TermMode::ALTSCREEN) {
+            self.saved_alt_c
+        } else {
+            self.saved_c
+        };
+        if let Some(saved) = saved {
+            self.c = saved;
+            self.move_to(self.c.x, self.c.y);
+        }
+    }
+
+    pub fn save_load_cursor(&mut self, save: bool) {
+        if save {
+            self.save_cursor();
+        } else {
+            self.load_cursor();
+        }
     }
 
     pub fn clear_tabs<R: Iterator<Item = usize>>(&mut self, range: R) {
@@ -422,7 +464,7 @@ impl Term {
 
             let text_end = cmp::min(end + 1, self.text_len(y));
             for x in start..text_end {
-                string.push(self.lines[y][x].c);
+                string.push(self.lines()[y][x].c);
             }
 
             if end == self.cols - 1 && !self.is_wrap_line(y) {
@@ -431,6 +473,11 @@ impl Term {
         }
 
         Some(string)
+    }
+
+    pub fn swap_screen(&mut self) {
+        self.mode ^= TermMode::ALTSCREEN;
+        self.set_dirty(0..self.dirty.len());
     }
 
     fn normalize_selection(&mut self) {
@@ -503,7 +550,7 @@ impl Term {
         }
         if p.y > 0 {
             let p = Point::new(self.cols - 1, p.y - 1);
-            if self.lines[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP) {
+            if self.lines()[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP) {
                 return Some(p);
             }
         }
@@ -514,7 +561,7 @@ impl Term {
         if p.x < self.cols - 1 {
             return Some(Point::new(p.x + 1, p.y));
         }
-        if p.y < self.rows - 1 && self.lines[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP) {
+        if p.y < self.rows - 1 && self.lines()[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP) {
             return Some(Point::new(0, p.y + 1));
         }
         None
@@ -524,12 +571,12 @@ impl Term {
     where
         F: Fn(&Self, &Point) -> Option<Point>,
     {
-        let c = self.lines[point.y][point.x].c;
+        let c = self.lines()[point.y][point.x].c;
         let delim = is_delim(c);
 
         let mut point = point;
         while let Some(next_p) = f(self, &point) {
-            let next_c = self.lines[next_p.y][next_p.x].c;
+            let next_c = self.lines()[next_p.y][next_p.x].c;
             if next_c != c && (delim || is_delim(next_c)) {
                 break;
             }
@@ -543,16 +590,34 @@ impl Term {
         if self.is_wrap_line(y) {
             return x;
         }
-        while x > 0 && self.lines[y][x - 1].c == ' ' {
+        while x > 0 && self.lines()[y][x - 1].c == ' ' {
             x -= 1
         }
         x
     }
 
     fn is_wrap_line(&self, y: usize) -> bool {
-        self.lines[y][self.cols - 1]
+        self.lines()[y][self.cols - 1]
             .prop
             .attr
             .contains(GlyphAttr::WRAP)
+    }
+
+    #[inline]
+    fn lines(&self) -> &[Vec<Glyph>] {
+        if self.mode.contains(TermMode::ALTSCREEN) {
+            &self.lines[self.rows..]
+        } else {
+            &self.lines[0..self.rows]
+        }
+    }
+
+    #[inline]
+    fn lines_mut(&mut self) -> &mut [Vec<Glyph>] {
+        if self.mode.contains(TermMode::ALTSCREEN) {
+            &mut self.lines[self.rows..]
+        } else {
+            &mut self.lines[0..self.rows]
+        }
     }
 }

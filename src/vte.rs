@@ -222,11 +222,26 @@ impl<'a> Performer<'a> {
                         self.win.set_mode(WinMode::MOUSESGR, val);
                     }
                     1034 => self.win.set_mode(WinMode::EIGHT_BIT, val),
-                    1048 => {
-                        if val {
-                            self.term.save_cursor();
-                        } else {
-                            self.term.load_cursor();
+                    47 | 1047 => {
+                        /* swap screen */
+                        let alt = self.term.in_mode(TermMode::ALTSCREEN);
+                        if alt {
+                            self.term.clear_region(0..self.term.cols, 0..self.term.rows);
+                        }
+                        if val ^ alt {
+                            self.term.swap_screen()
+                        }
+                    }
+                    1048 => self.term.save_load_cursor(val),
+                    1049 => {
+                        /* swap screen & set/restore cursor as xterm */
+                        self.term.save_load_cursor(val);
+                        let alt = self.term.in_mode(TermMode::ALTSCREEN);
+                        if alt {
+                            self.term.clear_region(0..self.term.cols, 0..self.term.rows);
+                        }
+                        if val ^ alt {
+                            self.term.swap_screen()
                         }
                     }
                     _ => (),
