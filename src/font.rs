@@ -4,7 +4,15 @@ use crate::Result;
 use std::ffi::CString;
 use std::os::raw::c_int;
 
+/*
+ * Printable characters in ASCII, used to estimate the advance width
+ * of single wide characters.
+ */
+static ASCII_PRINTABLE: &[u8; 95] = b" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+
 pub struct Font {
+    height: usize,
+    width: usize,
     font: x11::XftFont,
     bfont: x11::XftFont,
     ifont: x11::XftFont,
@@ -18,6 +26,11 @@ impl Font {
         let matched = x11::XftFontMatch(dpy, scr, pattern)?;
         let font = x11::XftFontOpenPattern(dpy, matched)?;
         x11::FcPatternDestroy(matched);
+        let extents = x11::XftTextExtentsUtf8(dpy, font, ASCII_PRINTABLE);
+
+        let height = x11::font_ascent(font) + x11::font_descent(font);
+        let len = ASCII_PRINTABLE.len();
+        let width = (extents.xOff as usize + (len - 1)) / len;
 
         let slant = CString::new("slant").unwrap();
         let weight = CString::new("weight").unwrap();
@@ -42,6 +55,8 @@ impl Font {
 
         x11::FcPatternDestroy(pattern);
         Ok(Self {
+            height,
+            width,
             font,
             bfont,
             ifont,
@@ -63,7 +78,8 @@ impl Font {
     }
 
     pub fn size(&self) -> (usize, usize) {
-        x11::font_size(self.font)
+        //x11::font_size(self.font)
+        (self.width, self.height)
     }
 
     pub fn ascent(&self) -> usize {
