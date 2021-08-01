@@ -131,14 +131,10 @@ impl<'a> Performer<'a> {
                 28 => prop.attr.remove(GlyphAttr::INVISIBLE),
                 29 => prop.attr.remove(GlyphAttr::STRUCK),
                 30..=37 => prop.fg = (param[0] - 30) as usize,
-                38 => {
-                    prop.fg = Self::defcolor(&mut params);
-                }
+                38 => prop.fg = Self::defcolor(&mut params),
                 39 => prop.reset_fg(),
                 40..=47 => prop.bg = (param[0] - 40) as usize,
-                48 => {
-                    prop.bg = Self::defcolor(&mut params);
-                }
+                48 => prop.bg = Self::defcolor(&mut params),
                 49 => prop.reset_bg(),
                 90..=97 => prop.fg = (param[0] - 90 + 8) as usize,
                 100..=107 => prop.bg = (param[0] - 100 + 8) as usize,
