@@ -78,7 +78,6 @@ impl Font {
     }
 
     pub fn size(&self) -> (usize, usize) {
-        //x11::font_size(self.font)
         (self.width, self.height)
     }
 

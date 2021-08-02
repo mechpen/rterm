@@ -473,10 +473,6 @@ pub fn XftFontOpenPattern(dpy: Display, pattern: FcPattern) -> Result<XftFont> {
     Ok(font)
 }
 
-//pub fn font_size(font: XftFont) -> (usize, usize) {
-//    unsafe { (cast((*font).max_advance_width), cast((*font).height)) }
-//}
-
 pub fn font_ascent(font: XftFont) -> usize {
     unsafe { cast((*font).ascent) }
 }
