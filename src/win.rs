@@ -490,7 +490,7 @@ impl Win {
         }
 
         if let Some(key) = map_key(ksym, xev.state, &self.mode) {
-            self.term_write(term, &key);
+            self.term_write(term, key);
             return;
         }
 

@@ -291,10 +291,10 @@ impl Term {
 
     pub fn delete_chars(&mut self, n: usize) {
         let (x, y, cols) = (self.c.x, self.c.y, self.cols);
-        let n = cmp::min(n, self.cols - self.c.x);
+        let n = cmp::min(n, cols - x);
 
         self.lines_mut()[y].copy_within(x + n..cols, x);
-        self.clear_region(self.cols - n..self.cols, self.c.y..=self.c.y);
+        self.clear_region(cols - n..cols, y..=y);
     }
 
     pub fn put_tabs(&mut self, n: i32) {
@@ -327,6 +327,7 @@ impl Term {
         }
 
         let cols = self.cols;
+
         if self.c.wrap_next {
             let y = self.c.y;
             // for wide chars, cursor is not at cols-1
@@ -338,11 +339,11 @@ impl Term {
             self.c.wrap_next = false;
         }
 
-        if self.mode.contains(TermMode::INSERT) && self.c.x + width < self.cols {
+        if self.mode.contains(TermMode::INSERT) && self.c.x + width < cols {
             self.insert_blanks(width);
         }
 
-        if self.c.x + width > self.cols {
+        if self.c.x + width > cols {
             self.new_line(true);
         }
 

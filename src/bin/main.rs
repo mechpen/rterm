@@ -1,6 +1,7 @@
 extern crate rterm;
 
-use rterm::{app::App, Result};
+use rterm::app::App;
+use rterm::Result;
 use std::env;
 
 fn usage() {

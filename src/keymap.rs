@@ -246,6 +246,7 @@ const KEYS: &[Key] = make_keys! {
     { XK_F35,           XK_NO_MOD,      b"\x1B[23;5~",    0,    0},
 };
 
+#[allow(clippy::collapsible_else_if)]
 pub fn map_key(k: KeySym, state: c_uint, mode: &WinMode) -> Option<&'static [u8]> {
     let k = k as c_uint;
     if k & 0xFFFF < 0xFD00 {
@@ -272,16 +273,20 @@ pub fn map_key(k: KeySym, state: c_uint, mode: &WinMode) -> Option<&'static [u8]
             if key.appkeypad < 0 {
                 continue;
             }
-        } else if key.appkeypad > 0 {
-            continue;
+        } else {
+            if key.appkeypad > 0 {
+                continue;
+            }
         }
 
         if appcursor {
             if key.appcursor < 0 {
                 continue;
             }
-        } else if key.appcursor > 0 {
-            continue;
+        } else {
+            if key.appcursor > 0 {
+                continue;
+            }
         }
 
         return Some(key.s);
