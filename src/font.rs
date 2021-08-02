@@ -30,6 +30,8 @@ impl Font {
 
         let height = x11::font_ascent(font) + x11::font_descent(font);
         let len = ASCII_PRINTABLE.len();
+
+        // Divceil (round the width up).
         let width = (extents.xOff as usize + (len - 1)) / len;
 
         let slant = CString::new("slant").unwrap();
