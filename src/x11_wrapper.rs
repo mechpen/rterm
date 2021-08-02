@@ -90,6 +90,8 @@ pub use xlib::XSelectionEvent;
 pub use xlib::ClientMessage as CLIENT_MESSAGE;
 pub use xlib::XClientMessageEvent;
 
+pub use x11::xrender::XGlyphInfo;
+
 pub use x11::xrender::XRenderColor;
 pub use xft::XftColor;
 
@@ -471,12 +473,12 @@ pub fn XftFontOpenPattern(dpy: Display, pattern: FcPattern) -> Result<XftFont> {
     Ok(font)
 }
 
-pub fn font_size(font: XftFont) -> (usize, usize) {
-    unsafe { (cast((*font).max_advance_width), cast((*font).height)) }
-}
-
 pub fn font_ascent(font: XftFont) -> usize {
     unsafe { cast((*font).ascent) }
+}
+
+pub fn font_descent(font: XftFont) -> usize {
+    unsafe { cast((*font).descent) }
 }
 
 pub fn XftColorAllocName(
@@ -495,6 +497,20 @@ pub fn XftColorAllocName(
                 msg: format!("Invalid color name: {}", name_in),
             })
         }
+    }
+}
+
+pub fn XftTextExtentsUtf8(dpy: Display, font: XftFont, chars: &[u8]) -> XGlyphInfo {
+    let mut info = mem::MaybeUninit::uninit();
+    unsafe {
+        xft::XftTextExtentsUtf8(
+            dpy,
+            font,
+            chars.as_ptr(),
+            chars.len() as i32,
+            info.as_mut_ptr(),
+        );
+        info.assume_init()
     }
 }
 
