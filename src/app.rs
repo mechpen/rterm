@@ -7,6 +7,7 @@ use nix;
 use nix::errno::Errno;
 use nix::sys::select::{select, FdSet};
 use nix::sys::signal::{signal, SigHandler, Signal};
+use nix::sys::time::{TimeVal, TimeValLike};
 use std::fs::File;
 use std::io::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -83,7 +84,14 @@ impl App {
                 wfds.insert(pty_fd);
             }
 
-            match select(None, Some(&mut rfds), Some(&mut wfds), None, None) {
+            let mut timeout = TimeVal::milliseconds(500);
+            match select(
+                None,
+                Some(&mut rfds),
+                Some(&mut wfds),
+                None,
+                Some(&mut timeout),
+            ) {
                 Ok(_) => (),
                 Err(Errno::EINTR) => continue,
                 Err(err) => return Err(err.into()),

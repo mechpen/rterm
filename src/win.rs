@@ -52,6 +52,7 @@ const FORCEMOUSEMOD: u32 = x11::ShiftMask;
 pub struct Win {
     visible: bool,
     mode: WinMode,
+    cursor_vis: bool,
 
     dpy: x11::Display,
     win: x11::Window,
@@ -194,6 +195,7 @@ impl Win {
         Ok(Win {
             visible: true,
             mode: WinMode::empty(),
+            cursor_vis: true,
 
             sel_type,
             sel_snap: Snap::new(),
@@ -349,7 +351,12 @@ impl Win {
             term.dirty[y] = false;
         }
 
-        if !self.mode.contains(WinMode::HIDE) {
+        if term.c.blink {
+            self.cursor_vis = !self.cursor_vis;
+        } else {
+            self.cursor_vis = true;
+        }
+        if !self.mode.contains(WinMode::HIDE) && self.cursor_vis {
             let (x, y) = (term.c.x, term.c.y);
             match term.c.mode {
                 CursorMode::Block => {
