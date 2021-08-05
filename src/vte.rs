@@ -1,5 +1,6 @@
 use crate::charset::{Charset, CharsetIndex};
 use crate::color::{BG_COLOR, BG_COLOR_NAME, FG_COLOR, FG_COLOR_NAME};
+use crate::cursor::CursorMode;
 use crate::glyph::GlyphAttr;
 use crate::term::{Term, TermMode};
 use crate::win::{Win, WinMode};
@@ -104,7 +105,7 @@ impl<'a> Performer<'a> {
     }
 
     fn set_glyph_attr(&mut self, params: &Params) {
-        let prop = &mut self.term.c.glyph.prop;
+        let prop = &mut self.term.prop;
 
         if params.is_empty() {
             prop.reset();
@@ -594,126 +595,180 @@ impl<'a> Perform for Performer<'a> {
                 .unwrap_or(default)
         };
 
+        // FIXME i
+        // FIXME c
         match (action, intermediate) {
-            ('@', None) => // ICH -- Insert <n> blank char
-                term.insert_blanks(arg0_or(1)),
-            ('A', None) => // CUU -- Cursor <n> Up
-                term.move_to(term.c.x, term.c.y.saturating_sub(arg0_or(1))),
-            ('B', None) |  // CUD -- Cursor <n> Down
-            ('e', None) => // VPR -- Cursor <n> Down
-                term.move_to(term.c.x, term.c.y+arg0_or(1)),
-            ('b', None) => // REP -- Print last char <n> times
-            {
+            // ICH -- Insert <n> blank char
+            ('@', None) => term.insert_blanks(arg0_or(1)),
+            // CUU -- Cursor <n> Up
+            ('A', None) => term.move_to(term.c.x, term.c.y.saturating_sub(arg0_or(1))),
+            // CUD -- Cursor <n> Down
+            // VPR -- Cursor <n> Down
+            ('B', None) | ('e', None) => term.move_to(term.c.x, term.c.y + arg0_or(1)),
+            // REP -- Print last char <n> times
+            ('b', None) => {
                 if let Some(c) = self.last_c {
                     iter::repeat(c)
                         .take(arg0_or(1))
                         .for_each(|c| term.put_char(c));
                 }
-            },
-            ('C', None) |  // CUF -- Cursor <n> Forward
-            ('a', None) => // HPR -- Cursor <n> Forward
-                term.move_to(term.c.x+arg0_or(1), term.c.y),
-            ('c', _) if arg0_or(0) == 0 => // DA -- Device Attributes
-                term.pty.write(VTIDEN.to_vec()),
-            ('D', None) => // CUB -- Cursor <n> Backward
-                term.move_to(term.c.x.saturating_sub(arg0_or(1)), term.c.y),
-            ('d', None) => // VPA -- Move to <row>
-                term.move_ato(term.c.x, arg0_or(1)-1),
-            ('E', None) => // CNL -- Cursor <n> Down and first col
-                term.move_to(0, term.c.y+arg0_or(1)),
-            ('F', None) => // CPL -- Cursor <n> Up and first col
-                term.move_to(0, term.c.y.saturating_sub(arg0_or(1))),
-            ('G', None) |  // CHA -- Move to <col>
-            ('`', None) => // HPA
-                term.move_to(arg0_or(1)-1, term.c.y),
-            ('g', None) => // TBC -- Tabulation clear
-            {
+            }
+            // CUF -- Cursor <n> Forward | HPR -- Cursor <n> Forward
+            ('C', None) | ('a', None) => term.move_to(term.c.x + arg0_or(1), term.c.y),
+            // DA -- Device Attributes
+            ('c', _) if arg0_or(0) == 0 => term.pty.write(VTIDEN.to_vec()),
+            // CUB -- Cursor <n> Backward
+            ('D', None) => term.move_to(term.c.x.saturating_sub(arg0_or(1)), term.c.y),
+            // VPA -- Move to <row>
+            ('d', None) => term.move_ato(term.c.x, arg0_or(1) - 1),
+            // CNL -- Cursor <n> Down and first col
+            ('E', None) => term.move_to(0, term.c.y + arg0_or(1)),
+            // CPL -- Cursor <n> Up and first col
+            ('F', None) => term.move_to(0, term.c.y.saturating_sub(arg0_or(1))),
+            // CHA -- Move to <col> | HPA
+            ('G', None) | ('`', None) => term.move_to(arg0_or(1) - 1, term.c.y),
+            // TBC -- Tabulation clear
+            ('g', None) => {
                 match arg0_or(0) {
-                    0 => // clear current tab stop
-                        term.clear_tabs(iter::once(term.c.x)),
-                    3 => // clear all the tabs
-                        term.clear_tabs(0..term.cols),
+                    0 =>
+                    // clear current tab stop
+                    {
+                        term.clear_tabs(iter::once(term.c.x))
+                    }
+                    3 =>
+                    // clear all the tabs
+                    {
+                        term.clear_tabs(0..term.cols)
+                    }
                     x => println!("unknown TBC {}", x),
                 }
-            },
-            ('H', None) |  // CUP -- Move to <row> <col>
-            ('f', None) => // HVP
-                term.move_ato(arg1_or(1)-1, arg0_or(1)-1),
-            ('h', intermediate) => // SM -- Set terminal mode
-                self.set_mode(intermediate, params, true),
-            ('I', None) => // CHT -- Cursor Forward Tabulation <n> tab stops
-                term.put_tabs(arg0_or(1) as i32),
-            ('J', None) => // ED -- Clear screen
-            {
+            }
+            // CUP -- Move to <row> <col> |  HVP
+            ('H', None) | ('f', None) => term.move_ato(arg1_or(1) - 1, arg0_or(1) - 1),
+            // SM -- Set terminal mode
+            ('h', intermediate) => self.set_mode(intermediate, params, true),
+            // CHT -- Cursor Forward Tabulation <n> tab stops
+            ('I', None) => term.put_tabs(arg0_or(1) as i32),
+            // ED -- Clear screen
+            ('J', None) => {
                 let y = term.c.y;
                 match arg0_or(0) {
-                    0 => // below
+                    0 =>
+                    // below
                     {
                         term.clear_region(term.c.x..term.cols, iter::once(y));
-                        term.clear_region(0..term.cols, y+1..term.rows);
-                    },
-                    1 => // above
+                        term.clear_region(0..term.cols, y + 1..term.rows);
+                    }
+                    1 =>
+                    // above
                     {
                         term.clear_region(0..term.cols, 0..y);
                         term.clear_region(0..=term.c.x, iter::once(y));
-                    },
-                    2 => // all
-                        term.clear_region(0..term.cols, 0..term.rows),
+                    }
+                    2 =>
+                    // all
+                    {
+                        term.clear_region(0..term.cols, 0..term.rows)
+                    }
                     x => println!("unknown ED {}", x),
                 }
-            },
-            ('K', None) => // EL erase line
-            {
+            }
+            // EL erase line
+            ('K', None) => {
                 let y = term.c.y;
                 match arg0_or(0) {
-                    0 => // right
-                        term.clear_region(term.c.x..term.cols, iter::once(y)),
-                    1 => // left
-                        term.clear_region(0..=term.c.x, iter::once(y)),
-                    2 => // all
-                        term.clear_region(0..term.cols, iter::once(y)),
+                    0 =>
+                    // right
+                    {
+                        term.clear_region(term.c.x..term.cols, iter::once(y))
+                    }
+                    1 =>
+                    // left
+                    {
+                        term.clear_region(0..=term.c.x, iter::once(y))
+                    }
+                    2 =>
+                    // all
+                    {
+                        term.clear_region(0..term.cols, iter::once(y))
+                    }
                     x => println!("unknown EL {}", x),
                 }
-            },
-            ('L', None) => // IL -- Insert <n> blank lines
-                term.insert_lines(arg0_or(1)),
-            ('l', intermediate) => // RM -- Reset Mode
-                self.set_mode(intermediate, params, false),
-            ('M', None) => // DL -- Delete <n> lines
-                term.delete_lines(arg0_or(1)),
-            ('m', None) => // SGR -- Terminal attribute (color)
-                self.set_glyph_attr(params),
-            ('n', None) if arg0_or(0) == 6 => // DSR Device Status Report
-            {
-                let s = format!("\x1B[{};{}R", term.c.y+1, term.c.x+1);
+            }
+            // IL -- Insert <n> blank lines
+            ('L', None) => term.insert_lines(arg0_or(1)),
+            // RM -- Reset Mode
+            ('l', intermediate) => self.set_mode(intermediate, params, false),
+            // DL -- Delete <n> lines
+            ('M', None) => term.delete_lines(arg0_or(1)),
+            // SGR -- Terminal attribute (color)
+            ('m', None) => self.set_glyph_attr(params),
+            // DSR Device Status Report
+            ('n', None) if arg0_or(0) == 6 => {
+                let s = format!("\x1B[{};{}R", term.c.y + 1, term.c.x + 1);
                 term.pty.write(s.as_bytes().to_vec());
             }
-            ('P', None) => // DCH -- Delete <n> char
-                term.delete_chars(arg0_or(1)),
-            ('r', None) => // DECSTBM -- Set Scrolling Region
-            {
+            // DCH -- Delete <n> char
+            ('P', None) => term.delete_chars(arg0_or(1)),
+            // DECSTBM -- Set Scrolling Region
+            ('r', None) => {
                 let top = arg0_or(1) - 1;
                 let bot = arg1_or(term.rows) - 1;
                 term.set_scroll(top, bot);
                 term.move_ato(0, 0);
-            },
-            ('S', None) => // SU -- Scroll <n> line up
-                term.scroll_up(term.scroll_top, arg0_or(1)),
-            ('s', None) => // DECSC -- Save cursor position (ANSI.SYS)
-                term.save_cursor(),
-            ('T', None) => // SD -- Scroll <n> line down
-                term.scroll_down(term.scroll_top, arg0_or(1)),
-            ('u', None) => // DECRC -- Restore cursor position (ANSI.SYS)
-                term.load_cursor(),
-            ('X', None) => // ECH -- Erase <n> char
-                term.clear_region(
-                    term.c.x..term.c.x+arg0_or(1), iter::once(term.c.y)
-                ),
-            ('Z', None) => // CBT -- Cursor Backward Tabulation <n> tab stops
-                term.put_tabs(-(arg0_or(1) as i32)),
-            _ => println!(
-                "unknown csi {:?} {:?} {}", intermediates, params, action
-            ),
+            }
+            // SU -- Scroll <n> line up
+            ('S', None) => term.scroll_up(term.scroll_top, arg0_or(1)),
+            // DECSC -- Save cursor position (ANSI.SYS)
+            ('s', None) => term.save_cursor(),
+            // SD -- Scroll <n> line down
+            ('T', None) => term.scroll_down(term.scroll_top, arg0_or(1)),
+            // DECRC -- Restore cursor position (ANSI.SYS)
+            ('u', None) => term.load_cursor(),
+            // ECH -- Erase <n> char
+            ('X', None) => term.clear_region(term.c.x..term.c.x + arg0_or(1), iter::once(term.c.y)),
+            // CBT -- Cursor Backward Tabulation <n> tab stops
+            ('Z', None) => term.put_tabs(-(arg0_or(1) as i32)),
+            // DECSCUSR -- Set Cursor Style
+            ('q', Some(b' ')) => {
+                if let Some(arg0) = arg0 {
+                    match arg0.get(0) {
+                        Some(0) | Some(1) => {
+                            // Blinking block
+                            term.c.mode = CursorMode::Block;
+                            term.c.blink = true;
+                        }
+                        Some(2) => {
+                            // block
+                            term.c.mode = CursorMode::Block;
+                            term.c.blink = false;
+                        }
+                        Some(3) => {
+                            // blinking underline
+                            term.c.mode = CursorMode::Underline;
+                            term.c.blink = true;
+                        }
+                        Some(4) => {
+                            // underline
+                            term.c.mode = CursorMode::Underline;
+                            term.c.blink = false;
+                        }
+                        Some(5) => {
+                            // blinking bar
+                            term.c.mode = CursorMode::Bar;
+                            term.c.blink = true;
+                        }
+                        Some(6) => {
+                            // bar
+                            term.c.mode = CursorMode::Bar;
+                            term.c.blink = false;
+                        }
+                        Some(arg) => println!("unknown csi cursor style {}, (0-6 valid)", arg),
+                        _ => println!("csi cursor style missing argument, (0-6)"),
+                    }
+                }
+            }
+            _ => println!("unknown csi {:?} {:?} {}", intermediates, params, action),
         }
     }
 }

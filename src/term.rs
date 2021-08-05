@@ -1,8 +1,9 @@
 // FIXME: support wide chars
 
 use crate::charset::CharsetTable;
+use crate::color::{BG_COLOR, CURSOR_COLOR, CURSOR_REV_COLOR, FG_COLOR};
 use crate::cursor::Cursor;
-use crate::glyph::{blank_glyph, Glyph, GlyphAttr};
+use crate::glyph::{blank_glyph, Glyph, GlyphAttr, GlyphProp};
 use crate::point::Point;
 use crate::pty::Pty;
 use crate::snap::{is_delim, SnapMode};
@@ -59,6 +60,7 @@ pub struct Term {
     pub scroll_top: usize,
     pub scroll_bot: usize,
     pub charset: CharsetTable,
+    pub prop: GlyphProp,
     saved_c: Option<Cursor>,
     saved_alt_c: Option<Cursor>,
     // lines contains the main and alternate screens, access it through the
@@ -81,6 +83,7 @@ impl Term {
             scroll_top: 0,
             scroll_bot: 0,
             charset: CharsetTable::new(),
+            prop: GlyphProp::new(FG_COLOR, BG_COLOR, GlyphAttr::empty()),
             mode: TermMode::WRAP,
             tabs: Vec::new(),
             sel: Selection::new(),
@@ -151,12 +154,15 @@ impl Term {
         g
     }
 
-    pub fn get_glyph_at_cursor(&self) -> (usize, usize, Glyph) {
+    pub fn get_glyph_at_cursor(&self) -> Glyph {
         let (x, y) = (self.c.x, self.c.y);
         let mut g = self.lines()[y][x];
-        let reverse = !self.is_selected(x, y);
-        g.prop = self.c.glyph.prop.resolve(reverse);
-        (x, y, g)
+        if self.is_selected(x, y) {
+            g.prop.bg = CURSOR_REV_COLOR;
+        } else {
+            g.prop.bg = CURSOR_COLOR;
+        }
+        g
     }
 
     pub fn reset(&mut self) {
@@ -190,10 +196,11 @@ impl Term {
         R1: Iterator<Item = usize> + Clone,
         R2: Iterator<Item = usize>,
     {
+        let mut glyph = blank_glyph();
+        glyph.prop = self.prop;
         for y in yrange {
             self.dirty[y] = true;
             for x in xrange.clone() {
-                let glyph = self.c.glyph;
                 self.lines_mut()[y][x].clear(glyph);
                 if self.is_selected(x, y) {
                     self.clear_selection();
@@ -354,7 +361,7 @@ impl Term {
         // x, y may have updated.
         let (x, y) = (self.c.x, self.c.y);
         self.dirty[y] = true;
-        self.lines_mut()[y][x].prop = self.c.glyph.prop;
+        self.lines_mut()[y][x].prop = self.prop;
         self.lines_mut()[y][x].c = c;
         for x2 in x + 1..x + width {
             self.lines_mut()[y][x2].prop.attr.insert(GlyphAttr::DUMMY);

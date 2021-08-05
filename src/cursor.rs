@@ -1,9 +1,16 @@
-use crate::glyph::{blank_glyph, Glyph};
 use std::mem;
 
 #[derive(Clone, Copy, Debug)]
+pub enum CursorMode {
+    Block,
+    Underline,
+    Bar,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct Cursor {
-    pub glyph: Glyph,
+    pub mode: CursorMode,
+    pub blink: bool,
     pub x: usize,
     pub y: usize,
     // When cursor is at the right edge of the terminal, it does
@@ -14,7 +21,8 @@ pub struct Cursor {
 impl Cursor {
     pub fn new() -> Self {
         Cursor {
-            glyph: blank_glyph(),
+            mode: CursorMode::Block,
+            blink: false,
             wrap_next: false,
             x: 0,
             y: 0,
