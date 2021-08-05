@@ -1,5 +1,7 @@
 use crate::charset::{Charset, CharsetIndex};
-use crate::color::{BG_COLOR, BG_COLOR_NAME, FG_COLOR, FG_COLOR_NAME};
+use crate::color::{
+    BG_COLOR, BG_COLOR_NAME, CURSOR_COLOR, CURSOR_COLOR_NAME, FG_COLOR, FG_COLOR_NAME,
+};
 use crate::cursor::CursorMode;
 use crate::glyph::GlyphAttr;
 use crate::term::{Term, TermMode};
@@ -507,6 +509,27 @@ impl<'a> Perform for Performer<'a> {
                 }
                 self.win.redraw(&mut self.term);
             }
+            b"12" => {
+                /* set cursor color */
+                let mut params = params.iter();
+                params.next(); // skip the consumed param
+                if let Some(col_name) = params.next() {
+                    if params.next().is_none() {
+                        let name = String::from_utf8_lossy(col_name);
+                        if name == "?" {
+                            self.send_color_osc(CURSOR_COLOR, "12", bell_terminated);
+                        } else if let Err(err) = self.win.setcolor(CURSOR_COLOR as u16, Some(&name))
+                        {
+                            println!("OSC 12 error: {}", err.msg);
+                        }
+                    } else {
+                        println!("OSC 12, to many parameters");
+                    }
+                } else {
+                    println!("OSC 12, missing color name");
+                }
+                self.win.redraw(&mut self.term);
+            }
             b"104" => {
                 /* color reset, optional color index */
                 let mut params = params.iter();
@@ -560,6 +583,22 @@ impl<'a> Perform for Performer<'a> {
                 }
                 self.win.redraw(&mut self.term);
             }
+            b"112" => {
+                /* cursor color reset */
+                let mut params = params.iter();
+                params.next(); // skip the consumed param
+                if params.next().is_none() {
+                    if let Err(err) = self
+                        .win
+                        .setcolor(CURSOR_COLOR as u16, Some(CURSOR_COLOR_NAME))
+                    {
+                        println!("OSC 112 error: {}", err.msg);
+                    }
+                } else {
+                    println!("OSC 112 takes no parameters");
+                }
+                self.win.redraw(&mut self.term);
+            }
             _ => {
                 println!("Unknown OSC command {}", String::from_utf8_lossy(params[0]));
             }
@@ -595,8 +634,6 @@ impl<'a> Perform for Performer<'a> {
                 .unwrap_or(default)
         };
 
-        // FIXME i
-        // FIXME c
         match (action, intermediate) {
             // ICH -- Insert <n> blank char
             ('@', None) => term.insert_blanks(arg0_or(1)),
