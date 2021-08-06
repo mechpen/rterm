@@ -1,5 +1,9 @@
 use crate::app::app_exit;
-use crate::color::{BG_COLOR, BG_COLOR_NAME, FG_COLOR_NAME};
+use crate::color::{
+    BG_COLOR, BG_COLOR_NAME, CURSOR_COLOR, CURSOR_COLOR_NAME, CURSOR_REV_COLOR,
+    CURSOR_REV_COLOR_NAME, FG_COLOR_NAME,
+};
+use crate::cursor::CursorMode;
 use crate::font::Font;
 use crate::glyph::{GlyphAttr, GlyphProp};
 use crate::keymap::map_key;
@@ -38,11 +42,17 @@ bitflags! {
 // FIXME, this can only be 0 until impemented everywhere.
 const BORDERPX: u16 = 0;
 
+/*
+ * thickness of underline and bar cursors
+ */
+const CURSORTHICKNESS: usize = 2;
+
 const FORCEMOUSEMOD: u32 = x11::ShiftMask;
 
 pub struct Win {
     visible: bool,
     mode: WinMode,
+    cursor_vis: bool,
 
     dpy: x11::Display,
     win: x11::Window,
@@ -94,7 +104,7 @@ impl Win {
         let (width, height) = (cols * cw, rows * ch);
 
         let cmap = x11::XDefaultColormap(dpy, scr);
-        let mut colors = Vec::with_capacity(257); //COLOR_NAMES.len());
+        let mut colors = Vec::with_capacity(260);
         for i in 0..=255 {
             colors.push(
                 x11::xloadcolor(dpy, vis, cmap, i, None).expect("Failed to load a default color!"),
@@ -102,12 +112,12 @@ impl Win {
         }
         // cursor
         colors.push(
-            x11::xloadcolor(dpy, vis, cmap, 256, Some("#cccccc"))
+            x11::xloadcolor(dpy, vis, cmap, 256, Some(CURSOR_COLOR_NAME))
                 .expect("Failed to load a default color!"),
         );
         // reverse cursor
         colors.push(
-            x11::xloadcolor(dpy, vis, cmap, 257, Some("#555555"))
+            x11::xloadcolor(dpy, vis, cmap, 257, Some(CURSOR_REV_COLOR_NAME))
                 .expect("Failed to load a default color!"),
         );
         // foreground
@@ -185,6 +195,7 @@ impl Win {
         Ok(Win {
             visible: true,
             mode: WinMode::empty(),
+            cursor_vis: true,
 
             sel_type,
             sel_snap: Snap::new(),
@@ -276,11 +287,19 @@ impl Win {
             }
         }
         // cursor
-        if let Ok(color) = x11::xloadcolor(self.dpy, self.vis, self.cmap, 256, Some("#cccccc")) {
+        if let Ok(color) =
+            x11::xloadcolor(self.dpy, self.vis, self.cmap, 256, Some(CURSOR_COLOR_NAME))
+        {
             self.colors.push(color);
         }
         // reverse cursor
-        if let Ok(color) = x11::xloadcolor(self.dpy, self.vis, self.cmap, 257, Some("#555555")) {
+        if let Ok(color) = x11::xloadcolor(
+            self.dpy,
+            self.vis,
+            self.cmap,
+            257,
+            Some(CURSOR_REV_COLOR_NAME),
+        ) {
             self.colors.push(color);
         }
         // foreground
@@ -332,9 +351,49 @@ impl Win {
             term.dirty[y] = false;
         }
 
-        if !self.mode.contains(WinMode::HIDE) {
-            let (x, y, g) = term.get_glyph_at_cursor();
-            self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
+        if term.c.blink {
+            self.cursor_vis = !self.cursor_vis;
+        } else {
+            self.cursor_vis = true;
+        }
+        if !self.mode.contains(WinMode::HIDE) && self.cursor_vis {
+            let (x, y) = (term.c.x, term.c.y);
+            match term.c.mode {
+                CursorMode::Block => {
+                    let g = term.get_glyph_at_cursor();
+                    self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
+                }
+                CursorMode::Underline => {
+                    let drawcol = if term.is_selected(x, y) {
+                        self.colors[CURSOR_REV_COLOR]
+                    } else {
+                        self.colors[CURSOR_COLOR]
+                    };
+                    x11::XftDrawRect(
+                        self.draw,
+                        &drawcol,
+                        BORDERPX as usize + x * self.cw,
+                        BORDERPX as usize + (y + 1) * self.ch - CURSORTHICKNESS,
+                        self.cw,
+                        CURSORTHICKNESS,
+                    );
+                }
+                CursorMode::Bar => {
+                    let drawcol = if term.is_selected(x, y) {
+                        self.colors[CURSOR_REV_COLOR]
+                    } else {
+                        self.colors[CURSOR_COLOR]
+                    };
+                    x11::XftDrawRect(
+                        self.draw,
+                        &drawcol,
+                        BORDERPX as usize + x * self.cw,
+                        BORDERPX as usize + y * self.ch,
+                        CURSORTHICKNESS,
+                        self.ch,
+                    );
+                }
+            }
         }
 
         self.finish_draw(term.cols, term.rows);
