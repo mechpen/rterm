@@ -84,14 +84,19 @@ impl App {
                 wfds.insert(pty_fd);
             }
 
-            let mut timeout = TimeVal::milliseconds(500);
-            match select(
-                None,
-                Some(&mut rfds),
-                Some(&mut wfds),
-                None,
-                Some(&mut timeout),
-            ) {
+            let mut timeout_in;
+            // Something pending so let select just return otherwise events
+            // might be delayed.
+            let timeout = if self.win.is_pending() {
+                timeout_in = TimeVal::milliseconds(0);
+                Some(&mut timeout_in)
+            } else if self.term.c.blink {
+                timeout_in = TimeVal::milliseconds(500);
+                Some(&mut timeout_in)
+            } else {
+                None
+            };
+            match select(None, Some(&mut rfds), Some(&mut wfds), None, timeout) {
                 Ok(_) => (),
                 Err(Errno::EINTR) => continue,
                 Err(err) => return Err(err.into()),
@@ -103,9 +108,9 @@ impl App {
 
             self.win.undraw_cursor(&self.term);
 
-            if rfds.contains(win_fd) {
-                self.win.process_input(&mut self.term);
-            }
+            // Let pending do it's thing so always try to process events.
+            self.win.process_input(&mut self.term);
+
             if rfds.contains(pty_fd) {
                 let n = self.term.pty.read(&mut buf)?;
                 self.log_pty(&buf[..n])?;

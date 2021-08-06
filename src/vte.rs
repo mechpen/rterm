@@ -9,6 +9,9 @@ use crate::win::{Win, WinMode};
 use std::iter;
 use vte::{Params, ParamsIter, Parser, Perform};
 
+const NAME: &str = env!("CARGO_PKG_NAME");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub struct Vte {
     parser: Parser,
     last_c: Option<char>,
@@ -634,6 +637,7 @@ impl<'a> Perform for Performer<'a> {
                 .unwrap_or(default)
         };
 
+        // FIXME? i
         match (action, intermediate) {
             // ICH -- Insert <n> blank char
             ('@', None) => term.insert_blanks(arg0_or(1)),
@@ -766,6 +770,18 @@ impl<'a> Perform for Performer<'a> {
             ('X', None) => term.clear_region(term.c.x..term.c.x + arg0_or(1), iter::once(term.c.y)),
             // CBT -- Cursor Backward Tabulation <n> tab stops
             ('Z', None) => term.put_tabs(-(arg0_or(1) as i32)),
+            // XTVERSION -- Return the terminal name/version
+            ('q', Some(b'>')) => {
+                if let Some(arg0) = arg0 {
+                    if arg0.get(0) == Some(&0) {
+                        self.term.pty.write(
+                            format!("\x1bP>|{} {}\x1b\\", NAME, VERSION)
+                                .as_bytes()
+                                .to_vec(),
+                        );
+                    }
+                }
+            }
             // DECSCUSR -- Set Cursor Style
             ('q', Some(b' ')) => {
                 if let Some(arg0) = arg0 {
