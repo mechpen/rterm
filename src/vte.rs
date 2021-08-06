@@ -634,6 +634,8 @@ impl<'a> Perform for Performer<'a> {
                 .unwrap_or(default)
         };
 
+        // FIXME? i
+        // FIXME c
         match (action, intermediate) {
             // ICH -- Insert <n> blank char
             ('@', None) => term.insert_blanks(arg0_or(1)),

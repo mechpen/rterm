@@ -406,6 +406,10 @@ impl Win {
         self.draw(term);
     }
 
+    pub fn is_pending(&self) -> bool {
+        x11::XPending(self.dpy) > 0
+    }
+
     pub fn process_input(&mut self, term: &mut Term) {
         while x11::XPending(self.dpy) > 0 {
             let mut xev = x11::XNextEvent(self.dpy);
