@@ -793,6 +793,19 @@ impl Win {
         if attr.contains(GlyphAttr::INVISIBLE) {
             fg = bg;
         }
+        if attr.contains(GlyphAttr::FAINT) {
+            let faintfg = x11::XRenderColor {
+                alpha: fg.color.alpha,
+                red: fg.color.red / 2,
+                green: fg.color.green / 2,
+                blue: fg.color.blue / 2,
+            };
+            if let Ok(nfg) = x11::XftColorAllocValue(self.dpy, self.vis, self.cmap, &faintfg) {
+                fg = nfg;
+            } else {
+                println!("Failed to alloc truecolor for FAINT")
+            }
+        }
 
         x11::XftDrawRect(self.draw, &bg, xp, yp, width, self.ch);
         let idx = cs
