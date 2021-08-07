@@ -5,7 +5,7 @@ use crate::color::{
 };
 use crate::cursor::CursorMode;
 use crate::font::Font;
-use crate::glyph::{GlyphAttr, GlyphProp};
+use crate::glyph::GlyphProp;
 use crate::keymap::map_key;
 use crate::shortcut::find_shortcut;
 use crate::snap::Snap;
@@ -769,11 +769,7 @@ impl Win {
     }
 
     fn draw_cells(&self, cs: &[char], prop: GlyphProp, xp: usize, yp: usize) {
-        let GlyphProp { mut fg, bg, attr } = prop;
-        if attr.contains(GlyphAttr::BOLD) && fg < 8 {
-            fg += 8;
-        }
-
+        let GlyphProp { fg, bg, attr } = prop;
         let fg = if fg & (1 << 24) > 0 {
             // truecolor
             self.to_truecolor(fg)
