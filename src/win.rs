@@ -776,7 +776,7 @@ impl Win {
             cs.len()
         };
         let width = charlen * self.cw;
-        let fg = if fg & (1 << 24) > 0 {
+        let mut fg = if fg & (1 << 24) > 0 {
             // truecolor
             self.to_truecolor(fg)
         } else {
@@ -789,6 +789,10 @@ impl Win {
             self.colors[bg]
         };
         let font = self.font.get(attr);
+
+        if attr.contains(GlyphAttr::INVISIBLE) {
+            fg = bg;
+        }
 
         x11::XftDrawRect(self.draw, &bg, xp, yp, width, self.ch);
         let idx = cs
