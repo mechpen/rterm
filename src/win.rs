@@ -5,7 +5,7 @@ use crate::color::{
 };
 use crate::cursor::CursorMode;
 use crate::font::Font;
-use crate::glyph::GlyphProp;
+use crate::glyph::{GlyphAttr, GlyphProp};
 use crate::keymap::map_key;
 use crate::shortcut::find_shortcut;
 use crate::snap::Snap;
@@ -770,6 +770,12 @@ impl Win {
 
     fn draw_cells(&self, cs: &[char], prop: GlyphProp, xp: usize, yp: usize) {
         let GlyphProp { fg, bg, attr } = prop;
+        let charlen = if attr.contains(GlyphAttr::WIDE) {
+            cs.len() * 2
+        } else {
+            cs.len()
+        };
+        let width = charlen * self.cw;
         let fg = if fg & (1 << 24) > 0 {
             // truecolor
             self.to_truecolor(fg)
@@ -784,12 +790,22 @@ impl Win {
         };
         let font = self.font.get(attr);
 
-        x11::XftDrawRect(self.draw, &bg, xp, yp, cs.len() * self.cw, self.ch);
+        x11::XftDrawRect(self.draw, &bg, xp, yp, width, self.ch);
         let idx = cs
             .iter()
             .map(|&c| x11::XftCharIndex(self.dpy, font, c))
             .collect::<Vec<u32>>();
         x11::XftDrawGlyphs(self.draw, &fg, font, xp, yp + self.ca, &idx);
+
+        /* Render underline and strikethrough. */
+        if attr.contains(GlyphAttr::UNDERLINE) {
+            let y = yp + self.font.ascent() + 1;
+            x11::XftDrawRect(self.draw, &fg, xp, y, width, 1);
+        }
+        if attr.contains(GlyphAttr::STRUCK) {
+            let y = yp + (2 * self.font.ascent() / 3);
+            x11::XftDrawRect(self.draw, &fg, xp, y, width, 1);
+        }
     }
 
     fn draw_line(&mut self, term: &mut Term, y: usize) {
