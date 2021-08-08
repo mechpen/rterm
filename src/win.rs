@@ -775,7 +775,10 @@ impl Win {
     }
 
     fn draw_cells(&self, cs: &[char], prop: GlyphProp, xp: usize, yp: usize) {
-        let GlyphProp { fg, bg, attr } = prop;
+        let GlyphProp { mut fg, bg, attr } = prop;
+        if attr.contains(GlyphAttr::BOLD) && fg < 8 {
+            fg += 8;
+        }
         let charlen = if attr.contains(GlyphAttr::WIDE) {
             cs.len() * 2
         } else {
