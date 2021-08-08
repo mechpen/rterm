@@ -243,7 +243,8 @@ impl<'a> Performer<'a> {
                             self.term.clear_region(0..self.term.cols, 0..self.term.rows);
                         }
                         if val ^ alt {
-                            self.term.swap_screen()
+                            self.term.swap_screen();
+                            self.term.save_load_cursor(val);
                         }
                     }
                     _ => (),
