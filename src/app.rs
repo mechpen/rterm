@@ -11,6 +11,7 @@ use nix::sys::time::{TimeVal, TimeValLike};
 use std::fs::File;
 use std::io::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime};
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
@@ -73,8 +74,11 @@ impl App {
         let win_fd = self.win.fd();
         let pty_fd = self.term.pty.fd();
         let mut buf = [0; 8192];
+        let mut last_blink = SystemTime::now();
+        let blink_duration = Duration::from_millis(500);
 
         while is_running() {
+            let blink_elapsed = last_blink.elapsed().map_or_else(|_| blink_duration, |e| e);
             let mut rfds = FdSet::new();
             rfds.insert(pty_fd);
             rfds.insert(win_fd);
@@ -84,18 +88,16 @@ impl App {
                 wfds.insert(pty_fd);
             }
 
-            let mut timeout_in;
             // Something pending so let select just return otherwise events
             // might be delayed.
-            let timeout = if self.win.is_pending() {
-                timeout_in = TimeVal::milliseconds(0);
-                Some(&mut timeout_in)
-            } else if self.term.c.blink {
-                timeout_in = TimeVal::milliseconds(500);
-                Some(&mut timeout_in)
+            let mut timeout_in = if self.win.is_pending() {
+                TimeVal::milliseconds(0)
+            } else if let Some(to) = blink_duration.checked_sub(blink_elapsed) {
+                TimeVal::milliseconds(to.as_millis() as i64)
             } else {
-                None
+                TimeVal::milliseconds(blink_duration.as_millis() as i64)
             };
+            let timeout = Some(&mut timeout_in);
             match select(None, Some(&mut rfds), Some(&mut wfds), None, timeout) {
                 Ok(_) => (),
                 Err(Errno::EINTR) => continue,
@@ -117,7 +119,10 @@ impl App {
                 self.vte
                     .process_input(&buf[..n], &mut self.win, &mut self.term);
             }
-
+            if blink_elapsed >= blink_duration {
+                self.win.toggle_blink();
+                last_blink = SystemTime::now();
+            }
             self.win.draw(&mut self.term);
         }
 

@@ -338,11 +338,17 @@ impl Win {
         self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
     }
 
+    pub fn toggle_blink(&mut self) {
+        self.mode
+            .set(WinMode::BLINK, !self.mode.contains(WinMode::BLINK));
+    }
+
     pub fn draw(&mut self, term: &mut Term) {
         if !self.visible {
             return;
         }
 
+        term.setdirtattr(GlyphAttr::BLINK);
         for y in 0..term.rows {
             if !term.dirty[y] {
                 continue;
@@ -352,7 +358,7 @@ impl Win {
         }
 
         if term.c.blink {
-            self.cursor_vis = !self.cursor_vis;
+            self.cursor_vis = !self.mode.contains(WinMode::BLINK);
         } else {
             self.cursor_vis = true;
         }
@@ -769,12 +775,14 @@ impl Win {
     }
 
     fn draw_cells(&self, cs: &[char], prop: GlyphProp, xp: usize, yp: usize) {
-        let GlyphProp { mut fg, bg, attr } = prop;
-        if attr.contains(GlyphAttr::BOLD) && fg < 8 {
-            fg += 8;
-        }
-
-        let fg = if fg & (1 << 24) > 0 {
+        let GlyphProp { fg, bg, attr } = prop;
+        let charlen = if attr.contains(GlyphAttr::WIDE) {
+            cs.len() * 2
+        } else {
+            cs.len()
+        };
+        let width = charlen * self.cw;
+        let mut fg = if fg & (1 << 24) > 0 {
             // truecolor
             self.to_truecolor(fg)
         } else {
@@ -788,12 +796,42 @@ impl Win {
         };
         let font = self.font.get(attr);
 
-        x11::XftDrawRect(self.draw, &bg, xp, yp, cs.len() * self.cw, self.ch);
+        if attr.contains(GlyphAttr::FAINT) {
+            let faintfg = x11::XRenderColor {
+                alpha: fg.color.alpha,
+                red: fg.color.red / 2,
+                green: fg.color.green / 2,
+                blue: fg.color.blue / 2,
+            };
+            if let Ok(nfg) = x11::XftColorAllocValue(self.dpy, self.vis, self.cmap, &faintfg) {
+                fg = nfg;
+            } else {
+                println!("Failed to alloc truecolor for FAINT")
+            }
+        }
+        if attr.contains(GlyphAttr::INVISIBLE) {
+            fg = bg;
+        }
+        if attr.contains(GlyphAttr::BLINK) && self.mode.contains(WinMode::BLINK) {
+            fg = bg;
+        }
+
+        x11::XftDrawRect(self.draw, &bg, xp, yp, width, self.ch);
         let idx = cs
             .iter()
             .map(|&c| x11::XftCharIndex(self.dpy, font, c))
             .collect::<Vec<u32>>();
         x11::XftDrawGlyphs(self.draw, &fg, font, xp, yp + self.ca, &idx);
+
+        /* Render underline and strikethrough. */
+        if attr.contains(GlyphAttr::UNDERLINE) {
+            let y = yp + self.font.ascent() + 1;
+            x11::XftDrawRect(self.draw, &fg, xp, y, width, 1);
+        }
+        if attr.contains(GlyphAttr::STRUCK) {
+            let y = yp + (2 * self.font.ascent() / 3);
+            x11::XftDrawRect(self.draw, &fg, xp, y, width, 1);
+        }
     }
 
     fn draw_line(&mut self, term: &mut Term, y: usize) {

@@ -20,8 +20,9 @@ bitflags! {
         // at line wrap
         const WRAP       = 1 << 8;
 
+        const WIDE       = 1 << 9;
         // dummy for wide chars
-        const DUMMY      = 1 << 9;
+        const DUMMY      = 1 << 10;
     }
 }
 
