@@ -338,11 +338,17 @@ impl Win {
         self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
     }
 
+    pub fn toggle_blink(&mut self) {
+        self.mode
+            .set(WinMode::BLINK, !self.mode.contains(WinMode::BLINK));
+    }
+
     pub fn draw(&mut self, term: &mut Term) {
         if !self.visible {
             return;
         }
 
+        term.setdirtattr(GlyphAttr::BLINK);
         for y in 0..term.rows {
             if !term.dirty[y] {
                 continue;
@@ -352,7 +358,7 @@ impl Win {
         }
 
         if term.c.blink {
-            self.cursor_vis = !self.cursor_vis;
+            self.cursor_vis = !self.mode.contains(WinMode::BLINK);
         } else {
             self.cursor_vis = true;
         }
@@ -790,9 +796,6 @@ impl Win {
         };
         let font = self.font.get(attr);
 
-        if attr.contains(GlyphAttr::INVISIBLE) {
-            fg = bg;
-        }
         if attr.contains(GlyphAttr::FAINT) {
             let faintfg = x11::XRenderColor {
                 alpha: fg.color.alpha,
@@ -805,6 +808,12 @@ impl Win {
             } else {
                 println!("Failed to alloc truecolor for FAINT")
             }
+        }
+        if attr.contains(GlyphAttr::INVISIBLE) {
+            fg = bg;
+        }
+        if attr.contains(GlyphAttr::BLINK) && self.mode.contains(WinMode::BLINK) {
+            fg = bg;
         }
 
         x11::XftDrawRect(self.draw, &bg, xp, yp, width, self.ch);

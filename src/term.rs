@@ -488,6 +488,18 @@ impl Term {
         self.set_dirty(0..self.dirty.len());
     }
 
+    pub fn setdirtattr(&mut self, attr: GlyphAttr) {
+        let start = self.first_line();
+        for i in 0..self.rows {
+            for g in self.lines[start + i].iter() {
+                if g.prop.attr.contains(attr) {
+                    self.dirty[i] = true;
+                    break;
+                }
+            }
+        }
+    }
+
     fn normalize_selection(&mut self) {
         let (mut nb, mut ne) = sort_pair(self.sel.ob, self.sel.oe);
 
@@ -609,6 +621,15 @@ impl Term {
             .prop
             .attr
             .contains(GlyphAttr::WRAP)
+    }
+
+    #[inline]
+    fn first_line(&self) -> usize {
+        if self.mode.contains(TermMode::ALTSCREEN) {
+            self.rows
+        } else {
+            0
+        }
     }
 
     #[inline]
