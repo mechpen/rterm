@@ -103,6 +103,10 @@ impl Term {
             return false;
         }
 
+        if !self.sel.empty {
+            self.clear_selection();
+        }
+
         if self.c.y > rows - 1 {
             self.scroll_up(0, self.c.y - rows + 1)
         }
@@ -421,9 +425,9 @@ impl Term {
     }
 
     pub fn start_selection(&mut self, x: usize, y: usize, mode: SnapMode) {
-        // clear previous selection
-        self.clear_selection();
-        self.set_dirty(self.sel.nb.y..=self.sel.ne.y);
+        if !self.sel.empty {
+            self.clear_selection();
+        }
 
         self.sel.mode = mode;
         self.sel.ob.x = cmp::min(x, self.cols - 1);
@@ -438,6 +442,7 @@ impl Term {
     }
 
     pub fn extend_selection(&mut self, x: usize, y: usize) {
+        self.clear_selection();
         self.sel.oe.x = cmp::min(x, self.cols - 1);
         self.sel.oe.y = cmp::min(y, self.rows - 1);
         self.normalize_selection();
@@ -452,6 +457,7 @@ impl Term {
 
     pub fn clear_selection(&mut self) {
         self.sel.empty = true;
+        self.set_dirty(self.sel.nb.y..=self.sel.ne.y);
     }
 
     pub fn get_selection_content(&self) -> Option<String> {
@@ -529,10 +535,7 @@ impl Term {
             }
         }
 
-        let bot = cmp::min(nb.y, self.sel.nb.y);
-        let top = cmp::max(ne.y, self.sel.ne.y);
-        self.set_dirty(bot..=top);
-
+        self.set_dirty(nb.y..=ne.y);
         self.sel.empty = false;
         self.sel.nb = nb;
         self.sel.ne = ne;
