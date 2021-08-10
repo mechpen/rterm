@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "rterm"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "bitflags",
  "nix",
