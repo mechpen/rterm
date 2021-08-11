@@ -23,6 +23,8 @@ bitflags! {
         const WIDE       = 1 << 9;
         // dummy for wide chars
         const DUMMY      = 1 << 10;
+        // for codepoints that are part of a grapheme cluster (past the first).
+        const CLUSTER    = 1 << 11;
     }
 }
 

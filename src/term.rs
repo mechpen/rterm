@@ -51,6 +51,54 @@ pub const ROWS_MIN: usize = 1;
 pub const ROWS_MAX: usize = u16::MAX as usize;
 const TAB_STOP: usize = 8;
 
+/// Term row is basically an iterator but can not implement Iterator without
+/// a lot of allocations so we have this.
+pub struct TermRow<'row> {
+    row: &'row [Glyph],
+    pos: usize,
+    x: usize,
+}
+
+impl<'row> TermRow<'row> {
+    pub fn new(row: &[Glyph]) -> TermRow {
+        TermRow { row, pos: 0, x: 0 }
+    }
+
+    /// Get next glyph and properties from a row.
+    /// glyph will contain the chars making up the glyph (grapheme cluster- usually
+    /// just one but maybe more).  Returns the current row number (0 based) and the
+    /// glyph properties for the glyph or None if the row has been traversed.
+    pub fn next(&mut self, glyph: &mut Vec<char>) -> Option<(usize, GlyphProp)> {
+        let len = self.row.len();
+        if self.pos >= len {
+            return None;
+        }
+        let x = self.x;
+        self.x += 1;
+        glyph.clear();
+        let prop = self.row[self.pos].prop;
+        glyph.push(self.row[self.pos].c);
+        self.pos += 1;
+        while self.pos < len && self.row[self.pos].prop.attr.contains(GlyphAttr::CLUSTER) {
+            glyph.push(self.row[self.pos].c);
+            self.pos += 1;
+        }
+        Some((x, prop))
+    }
+
+    /// Return the glyph and properties for column x of the row.  Returns None of
+    /// the column is too large or if the TermRow has already advanced past x.
+    /// This advances the TermRow.
+    pub fn column(&mut self, x: usize, glyph: &mut Vec<char>) -> Option<GlyphProp> {
+        while let Some((cx, prop)) = self.next(glyph) {
+            if x == cx {
+                return Some(prop);
+            }
+        }
+        None
+    }
+}
+
 pub struct Term {
     pub rows: usize,
     pub cols: usize,
@@ -65,6 +113,9 @@ pub struct Term {
     saved_alt_c: Option<Cursor>,
     // lines contains the main and alternate screens, access it through the
     // lines() and lines_mut() functions to not have to worry about indexing.
+    // Each row of lines may be larger then cols to support grapheme clusters.
+    // The common case will be one codepoint per glyph so this structure should
+    // still be fine but when accessing lines have to consider this.
     lines: Vec<Vec<Glyph>>,
     tabs: Vec<bool>,
     mode: TermMode,
@@ -152,21 +203,27 @@ impl Term {
         self.mode.contains(mode)
     }
 
-    pub fn get_glyph(&self, x: usize, y: usize) -> Glyph {
-        let mut g = self.lines()[y][x];
-        g.prop = g.prop.resolve(self.is_selected(x, y));
-        g
+    pub fn get_row(&self, row: usize) -> TermRow {
+        TermRow::new(&self.lines()[row])
     }
 
-    pub fn get_glyph_at_cursor(&self) -> Glyph {
-        let (x, y) = (self.c.x, self.c.y);
-        let mut g = self.lines()[y][x];
-        if self.is_selected(x, y) {
-            g.prop.bg = CURSOR_REV_COLOR;
+    pub fn get_glyph(&self, x: usize, y: usize, glyph: &mut Vec<char>) -> GlyphProp {
+        if let Some(prop) = self.get_row(y).column(x, glyph) {
+            prop.resolve(self.is_selected(x, y))
         } else {
-            g.prop.bg = CURSOR_COLOR;
+            GlyphProp::new(0, 0, GlyphAttr::empty())
         }
-        g
+    }
+
+    pub fn get_glyph_at_cursor(&self, glyph: &mut Vec<char>) -> GlyphProp {
+        let (x, y) = (self.c.x, self.c.y);
+        let mut prop = self.get_glyph(x, y, glyph);
+        if self.is_selected(x, y) {
+            prop.bg = CURSOR_REV_COLOR;
+        } else {
+            prop.bg = CURSOR_COLOR;
+        }
+        prop
     }
 
     pub fn reset(&mut self) {
@@ -176,6 +233,7 @@ impl Term {
         }
 
         self.c.reset();
+        // XXX reset mode
         self.scroll_top = 0;
         self.scroll_bot = self.rows - 1;
     }
@@ -331,18 +389,34 @@ impl Term {
         }
     }
 
-    pub fn put_char(&mut self, c: char) {
-        let width = UnicodeWidthChar::width(c).unwrap_or(0);
-        if width == 0 {
-            return;
+    fn adjust_x(&self, row: usize, mut x: usize) -> usize {
+        let mut i = 0;
+        while i <= x {
+            if let Some(g) = self.lines()[row].get(i) {
+                if g.prop.attr.contains(GlyphAttr::CLUSTER) {
+                    x += 1;
+                }
+            }
+            i += 1;
         }
+        x
+    }
+
+    pub fn put_char(&mut self, c: char) {
+        let width = if let Some(w) = UnicodeWidthChar::width(c) {
+            w
+        } else {
+            // Indicates a control code.
+            return;
+        };
 
         let cols = self.cols;
 
-        if self.c.wrap_next {
+        if width > 0 && self.c.wrap_next {
             let y = self.c.y;
+            let x = self.adjust_x(y, cols - 1);
             // for wide chars, cursor is not at cols-1
-            self.lines_mut()[y][cols - 1]
+            self.lines_mut()[y][x] //cols - 1]
                 .prop
                 .attr
                 .insert(GlyphAttr::WRAP);
@@ -364,20 +438,35 @@ impl Term {
 
         // x, y may have updated.
         let (x, y) = (self.c.x, self.c.y);
+        // skip past any extra codepoints from grapheme clusters.
+        let x = self.adjust_x(y, x);
         self.dirty[y] = true;
-        self.lines_mut()[y][x].prop = self.prop;
-        self.lines_mut()[y][x].c = c;
-        for x2 in x + 1..x + width {
-            self.lines_mut()[y][x2].prop.attr.insert(GlyphAttr::DUMMY);
+        {
+            let prop = self.prop;
+            let lines = self.lines_mut();
+            if lines[y].len() <= x {
+                lines[y].push(blank_glyph());
+            }
+            lines[y][x].prop = prop;
+            lines[y][x].c = c;
+            if width == 0 {
+                lines[y][x].prop.attr.insert(GlyphAttr::CLUSTER);
+            } else {
+                for x2 in x + 1..x + width {
+                    lines[y][x2].prop.attr.insert(GlyphAttr::DUMMY);
+                }
+            }
         }
 
-        self.c.x += width;
-        if self.c.x == cols {
-            if self.mode.contains(TermMode::WRAP) {
-                self.c.x -= width;
-                self.c.wrap_next = true;
-            } else {
-                self.c.x = 0;
+        if width > 0 {
+            self.c.x += width;
+            if self.c.x == cols {
+                if self.mode.contains(TermMode::WRAP) {
+                    //self.c.x -= width;
+                    self.c.wrap_next = true;
+                } else {
+                    self.c.x = 0;
+                }
             }
         }
     }
@@ -466,6 +555,7 @@ impl Term {
         }
 
         let mut string = String::new();
+        let mut glyph = Vec::new();
 
         for y in self.sel.nb.y..=self.sel.ne.y {
             let start = if y == self.sel.nb.y { self.sel.nb.x } else { 0 };
@@ -477,8 +567,13 @@ impl Term {
             };
 
             let text_end = cmp::min(end + 1, self.text_len(y));
-            for x in start..text_end {
-                string.push(self.lines()[y][x].c);
+            let mut row = self.get_row(y);
+            while let Some((x, _)) = row.next(&mut glyph) {
+                if x >= start && x < text_end {
+                    for c in &glyph {
+                        string.push(*c);
+                    }
+                }
             }
 
             if end == self.cols - 1 && !self.is_wrap_line(y) {
