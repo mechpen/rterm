@@ -4,6 +4,7 @@ use crate::color::{
 };
 use crate::cursor::CursorMode;
 use crate::glyph::GlyphAttr;
+use crate::pty::Pty;
 use crate::term::{Term, TermMode};
 use crate::win::{Win, WinMode};
 use std::iter;
@@ -25,8 +26,8 @@ impl Vte {
         }
     }
 
-    pub fn process_input(&mut self, buf: &[u8], win: &mut Win, term: &mut Term) {
-        let mut performer = Performer::new(win, term, self.last_c.take());
+    pub fn process_input(&mut self, buf: &[u8], win: &mut Win, term: &mut Term, pty: &mut Pty) {
+        let mut performer = Performer::new(win, term, pty, self.last_c.take());
         buf.iter()
             .for_each(|&b| self.parser.advance(&mut performer, b));
         self.last_c = performer.last_c.take();
@@ -38,12 +39,23 @@ const VTIDEN: &[u8] = b"\x1B[?6c";
 struct Performer<'a> {
     win: &'a mut Win,
     term: &'a mut Term,
+    pty: &'a mut Pty,
     last_c: Option<char>,
 }
 
 impl<'a> Performer<'a> {
-    pub fn new(win: &'a mut Win, term: &'a mut Term, last_c: Option<char>) -> Self {
-        Self { win, term, last_c }
+    pub fn new(
+        win: &'a mut Win,
+        term: &'a mut Term,
+        pty: &'a mut Pty,
+        last_c: Option<char>,
+    ) -> Self {
+        Self {
+            win,
+            term,
+            pty,
+            last_c,
+        }
     }
 
     fn defcolor(params: &mut ParamsIter) -> usize {
@@ -285,7 +297,7 @@ impl<'a> Performer<'a> {
             v.push(0x1b);
             v.push(b'\\');
         }
-        self.term.pty.write(&v);
+        self.pty.write(&v);
     }
 }
 
@@ -377,7 +389,7 @@ impl<'a> Perform for Performer<'a> {
             (b'Z', None) =>
             // DECID -- Identify Terminal
             {
-                term.pty.write(VTIDEN)
+                self.pty.write(VTIDEN)
             }
             (b'c', None) =>
             // RIS -- Reset to initial state
@@ -658,7 +670,7 @@ impl<'a> Perform for Performer<'a> {
             // CUF -- Cursor <n> Forward | HPR -- Cursor <n> Forward
             ('C', None) | ('a', None) => term.move_to(term.c.x + arg0_or(1), term.c.y),
             // DA -- Device Attributes
-            ('c', _) if arg0_or(0) == 0 => term.pty.write(VTIDEN),
+            ('c', _) if arg0_or(0) == 0 => self.pty.write(VTIDEN),
             // CUB -- Cursor <n> Backward
             ('D', None) => term.move_to(term.c.x.saturating_sub(arg0_or(1)), term.c.y),
             // VPA -- Move to <row>
@@ -748,7 +760,7 @@ impl<'a> Perform for Performer<'a> {
             // DSR Device Status Report
             ('n', None) if arg0_or(0) == 6 => {
                 let s = format!("\x1B[{};{}R", term.c.y + 1, term.c.x + 1);
-                term.pty.write(s.as_bytes());
+                self.pty.write(s.as_bytes());
             }
             // DCH -- Delete <n> char
             ('P', None) => term.delete_chars(arg0_or(1)),
@@ -775,8 +787,7 @@ impl<'a> Perform for Performer<'a> {
             ('q', Some(b'>')) => {
                 if let Some(arg0) = arg0 {
                     if arg0.get(0) == Some(&0) {
-                        self.term
-                            .pty
+                        self.pty
                             .write(format!("\x1bP>|{} {}\x1b\\", NAME, VERSION).as_bytes());
                     }
                 }

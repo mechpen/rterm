@@ -7,6 +7,7 @@ use crate::cursor::CursorMode;
 use crate::font::Font;
 use crate::glyph::{GlyphAttr, GlyphProp};
 use crate::keymap::map_key;
+use crate::pty::Pty;
 use crate::shortcut::find_shortcut;
 use crate::snap::Snap;
 use crate::term::Term;
@@ -420,7 +421,7 @@ impl Win {
         x11::XPending(self.dpy) > 0
     }
 
-    pub fn process_input(&mut self, term: &mut Term) -> bool {
+    pub fn process_input(&mut self, term: &mut Term, pty: &mut Pty) -> bool {
         let mut res = false;
         while x11::XPending(self.dpy) > 0 {
             let mut xev = x11::XNextEvent(self.dpy);
@@ -433,15 +434,15 @@ impl Win {
             match xev_type {
                 x11::EXPOSE => (),
                 x11::KEY_RELEASE => (),
-                x11::KEY_PRESS => self.key_press(xev, term),
+                x11::KEY_PRESS => self.key_press(xev, term, pty),
                 x11::CLIENT_MESSAGE => self.client_message(xev),
-                x11::CONFIGURE_NOTIFY => self.configure_notify(xev, term),
+                x11::CONFIGURE_NOTIFY => self.configure_notify(xev, term, pty),
                 x11::VISIBILITY_NOTIFY => self.visibility_notify(xev),
                 x11::UNMAP_NOTIFY => self.unmap_notify(),
-                x11::MOTION_NOTIFY => self.motion_notify(xev, term),
-                x11::BUTTON_PRESS => self.button_press(xev, term),
-                x11::BUTTON_RELEASE => self.button_release(xev, term),
-                x11::SELECTION_NOTIFY => self.selection_notify(xev, term),
+                x11::MOTION_NOTIFY => self.motion_notify(xev, term, pty),
+                x11::BUTTON_PRESS => self.button_press(xev, term, pty),
+                x11::BUTTON_RELEASE => self.button_release(xev, term, pty),
+                x11::SELECTION_NOTIFY => self.selection_notify(xev, term, pty),
                 x11::SELECTION_REQUEST => self.selection_request(xev),
                 _ => println!("event type {:?}", xev_type),
             }
@@ -471,7 +472,7 @@ impl Win {
         y as usize / self.ch
     }
 
-    fn mousereport(&mut self, e: x11::XEvent, term: &mut Term) {
+    fn mousereport(&mut self, e: x11::XEvent, term: &mut Term, pty: &mut Pty) {
         let x = self.evcol(&e);
         let y = self.evrow(&e);
         let mut button = unsafe { e.button.button };
@@ -551,10 +552,10 @@ impl Win {
             return;
         }
 
-        self.term_write(term, buf.as_bytes());
+        self.term_write(term, pty, buf.as_bytes());
     }
 
-    fn key_press(&mut self, xev: x11::XEvent, term: &mut Term) {
+    fn key_press(&mut self, xev: x11::XEvent, term: &mut Term, pty: &mut Pty) {
         let mut xev = xev;
         let xev: &mut x11::XKeyEvent = x11::cast_event_mut(&mut xev);
         let mut buf = [0u8; 64];
@@ -566,7 +567,7 @@ impl Win {
         }
 
         if let Some(key) = map_key(ksym, xev.state, &self.mode) {
-            self.term_write(term, key);
+            self.term_write(term, pty, key);
             return;
         }
 
@@ -585,7 +586,7 @@ impl Win {
                 len = 2;
             }
         }
-        self.term_write(term, &buf[..len]);
+        self.term_write(term, pty, &buf[..len]);
     }
 
     fn client_message(&mut self, xev: x11::XEvent) {
@@ -598,13 +599,14 @@ impl Win {
         }
     }
 
-    fn configure_notify(&mut self, xev: x11::XEvent, term: &mut Term) {
+    fn configure_notify(&mut self, xev: x11::XEvent, term: &mut Term, pty: &mut Pty) {
         let xev: &x11::XConfigureEvent = x11::cast_event(&xev);
         let cols = xev.width as usize / self.cw;
         let rows = xev.height as usize / self.ch;
         if !term.resize(cols, rows) {
             return;
         }
+        pty.resize(cols, rows).expect("Failed to resize pty!");
 
         self.width = term.cols * self.cw;
         self.height = term.rows * self.ch;
@@ -624,10 +626,10 @@ impl Win {
     }
 
     // FIXME: select rectangle
-    fn motion_notify(&mut self, xev: x11::XEvent, term: &mut Term) {
+    fn motion_notify(&mut self, xev: x11::XEvent, term: &mut Term, pty: &mut Pty) {
         if self.mode.intersects(WinMode::MOUSE) && unsafe { xev.button.state & FORCEMOUSEMOD } == 0
         {
-            self.mousereport(xev, term);
+            self.mousereport(xev, term, pty);
             return;
         }
         let xev: &x11::XMotionEvent = x11::cast_event(&xev);
@@ -635,10 +637,10 @@ impl Win {
         term.extend_selection(x, y);
     }
 
-    fn button_press(&mut self, xev: x11::XEvent, term: &mut Term) {
+    fn button_press(&mut self, xev: x11::XEvent, term: &mut Term, pty: &mut Pty) {
         if self.mode.intersects(WinMode::MOUSE) && unsafe { xev.button.state & FORCEMOUSEMOD } == 0
         {
-            self.mousereport(xev, term);
+            self.mousereport(xev, term, pty);
             return;
         }
         let xev: &x11::XButtonEvent = x11::cast_event(&xev);
@@ -648,10 +650,10 @@ impl Win {
         }
     }
 
-    fn button_release(&mut self, xev: x11::XEvent, term: &mut Term) {
+    fn button_release(&mut self, xev: x11::XEvent, term: &mut Term, pty: &mut Pty) {
         if self.mode.intersects(WinMode::MOUSE) && unsafe { xev.button.state & FORCEMOUSEMOD } == 0
         {
-            self.mousereport(xev, term);
+            self.mousereport(xev, term, pty);
             return;
         }
         let xev: &x11::XButtonEvent = x11::cast_event(&xev);
@@ -662,7 +664,7 @@ impl Win {
         }
     }
 
-    fn selection_notify(&mut self, xev: x11::XEvent, term: &mut Term) {
+    fn selection_notify(&mut self, xev: x11::XEvent, term: &mut Term, pty: &mut Pty) {
         let xev: &x11::XSelectionEvent = x11::cast_event(&xev);
         if xev.property == 0 {
             return;
@@ -702,7 +704,7 @@ impl Win {
 
             let len = (nitems * (format as u64) / 8) as usize;
             let buf = unsafe { slice::from_raw_parts(data, len) };
-            self.term_write(term, buf);
+            self.term_write(term, pty, buf);
             x11::XFree(data as *mut _);
 
             if rem == 0 {
@@ -911,11 +913,11 @@ impl Win {
         );
     }
 
-    fn term_write(&mut self, term: &mut Term, buf: &[u8]) {
+    fn term_write(&mut self, term: &mut Term, pty: &mut Pty, buf: &[u8]) {
         if self.mode.contains(WinMode::ECHO) {
             term.put_string(term_decode(buf));
         }
-        term.pty.write(buf);
+        pty.write(buf);
     }
 }
 

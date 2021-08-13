@@ -5,7 +5,6 @@ use crate::color::{BG_COLOR, CURSOR_COLOR, CURSOR_REV_COLOR, FG_COLOR};
 use crate::cursor::Cursor;
 use crate::glyph::{blank_glyph, Glyph, GlyphAttr, GlyphProp};
 use crate::point::Point;
-use crate::pty::Pty;
 use crate::snap::{is_delim, SnapMode};
 use crate::utils::{is_between, limit, sort_pair};
 use crate::Result;
@@ -104,7 +103,6 @@ pub struct Term {
     pub cols: usize,
     pub c: Cursor,
     pub dirty: Vec<bool>,
-    pub pty: Pty,
     pub scroll_top: usize,
     pub scroll_bot: usize,
     pub charset: CharsetTable,
@@ -130,7 +128,6 @@ impl Term {
             c: Cursor::new(),
             lines: Vec::new(),
             dirty: Vec::new(),
-            pty: Pty::new()?,
             scroll_top: 0,
             scroll_bot: 0,
             charset: CharsetTable::new(),
@@ -188,7 +185,6 @@ impl Term {
         self.scroll_bot = rows - 1;
         self.cols = cols;
         self.rows = rows;
-        self.pty.resize(cols, rows).unwrap();
 
         // relocate cursor
         self.move_to(self.c.x, self.c.y);

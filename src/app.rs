@@ -1,3 +1,4 @@
+use crate::pty::Pty;
 use crate::term::Term;
 use crate::utils::parse_geometry;
 use crate::vte::Vte;
@@ -53,6 +54,7 @@ pub struct App {
     term: Term,
     win: Win,
     vte: Vte,
+    pty: Pty,
     log: Option<File>,
 }
 
@@ -70,17 +72,20 @@ impl App {
         set_sigchld();
 
         let term = Term::new(cols, rows)?;
+        let mut pty = Pty::new()?;
+        pty.resize(cols, rows)?;
         Ok(App {
             win: Win::new(term.cols, term.rows, xoff, yoff, font)?,
             term,
             vte: Vte::new(),
+            pty,
             log,
         })
     }
 
     pub fn run(&mut self) -> Result<()> {
         let win_fd = self.win.fd();
-        let pty_fd = self.term.pty.fd();
+        let pty_fd = self.pty.fd();
         let mut buf = [0; 8192];
         let mut last_blink = SystemTime::now();
         let blink_duration = Duration::from_millis(500);
@@ -96,7 +101,7 @@ impl App {
             rfds.insert(win_fd);
 
             let mut wfds = FdSet::new();
-            if self.term.pty.need_flush() {
+            if self.pty.need_flush() {
                 wfds.insert(pty_fd);
             }
 
@@ -118,20 +123,20 @@ impl App {
             now = SystemTime::now();
 
             if wfds.contains(pty_fd) {
-                self.term.pty.flush()?;
+                self.pty.flush()?;
             }
 
             self.win.undraw_cursor(&self.term);
 
             // Let pending do it's thing so always try to process events.
-            let mut check_idle = self.win.process_input(&mut self.term);
+            let mut check_idle = self.win.process_input(&mut self.term, &mut self.pty);
 
             if rfds.contains(pty_fd) {
                 check_idle = true;
-                let n = self.term.pty.read(&mut buf)?;
+                let n = self.pty.read(&mut buf)?;
                 self.log_pty(&buf[..n])?;
                 self.vte
-                    .process_input(&buf[..n], &mut self.win, &mut self.term);
+                    .process_input(&buf[..n], &mut self.win, &mut self.term, &mut self.pty);
             }
             if blink_elapsed >= blink_duration {
                 self.win.toggle_blink();
