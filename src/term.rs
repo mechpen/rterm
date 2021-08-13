@@ -233,7 +233,8 @@ impl Term {
         }
 
         self.c.reset();
-        // XXX reset mode
+        self.prop.reset();
+        self.mode = TermMode::WRAP;
         self.scroll_top = 0;
         self.scroll_bot = self.rows - 1;
     }
@@ -262,10 +263,59 @@ impl Term {
         glyph.prop = self.prop;
         for y in yrange {
             self.dirty[y] = true;
+            let mut shrink = 0;
+            let len = self.lines_mut()[y].len();
+            let mut startx = None;
+            let mut endx = 0;
+            let mut offset = 0;
             for x in xrange.clone() {
-                self.lines_mut()[y][x].clear(glyph);
+                if startx.is_none() {
+                    let ax = self.adjust_x(y, x);
+                    startx = Some(ax);
+                    offset = ax - x;
+                }
+                let x = x + offset;
+                if (x + shrink) >= len {
+                    break;
+                }
+                while self.lines_mut()[y][x + shrink]
+                    .prop
+                    .attr
+                    .contains(GlyphAttr::CLUSTER)
+                {
+                    self.lines_mut()[y][x + shrink].clear(glyph);
+                    shrink += 1;
+                    if (x + shrink) >= len {
+                        break;
+                    }
+                }
+                if (x + shrink) >= len {
+                    break;
+                }
+                self.lines_mut()[y][x + shrink].clear(glyph);
                 if self.is_selected(x, y) {
                     self.clear_selection();
+                }
+                endx = x;
+            }
+            if endx + 1 + shrink < len {
+                endx += 1;
+                while self.lines_mut()[y][endx + shrink]
+                    .prop
+                    .attr
+                    .contains(GlyphAttr::CLUSTER)
+                {
+                    self.lines_mut()[y][endx + shrink].clear(glyph);
+                    shrink += 1;
+                    if (endx + shrink) >= len {
+                        break;
+                    }
+                }
+            }
+            if shrink > 0 {
+                if let Some(startx) = startx {
+                    self.lines_mut()[y].copy_within(startx + shrink.., startx);
+                    self.lines_mut()[y].resize(len - shrink, glyph);
                 }
             }
         }
@@ -348,21 +398,27 @@ impl Term {
         self.c.wrap_next = false;
     }
 
+    // XXX fix x
     pub fn insert_blanks(&mut self, n: usize) {
         let (x, y) = (self.c.x, self.c.y);
         let n = cmp::min(n, self.cols - x);
 
-        let source = x..self.cols - n;
-        let dest = x + n;
+        let ax = self.adjust_x(y, x);
+        let source = ax..self.adjust_x(y, self.cols - n);
+        let dest = ax + self.adjust_x(y, n);
         self.lines_mut()[y].copy_within(source, dest);
         self.clear_region(x..x + n, y..=y);
     }
 
+    // XXX fix x
     pub fn delete_chars(&mut self, n: usize) {
         let (x, y, cols) = (self.c.x, self.c.y, self.cols);
         let n = cmp::min(n, cols - x);
 
-        self.lines_mut()[y].copy_within(x + n..cols, x);
+        let ax = self.adjust_x(y, x);
+        let an = self.adjust_x(y, n);
+        let acols = self.adjust_x(y, cols);
+        self.lines_mut()[y].copy_within(ax + an..acols, ax);
         self.clear_region(cols - n..cols, y..=y);
     }
 
@@ -689,6 +745,7 @@ impl Term {
     where
         F: Fn(&Self, &Point) -> Option<Point>,
     {
+        // XXX - fix x
         let c = self.lines()[point.y][point.x].c;
         let delim = is_delim(c);
 
@@ -708,17 +765,17 @@ impl Term {
         if self.is_wrap_line(y) {
             return x;
         }
-        while x > 0 && self.lines()[y][x - 1].c == ' ' {
+        let mut ax = self.lines()[y].len();
+        while x > 0 && self.lines()[y][ax - 1].c == ' ' {
+            ax -= 1;
             x -= 1
         }
         x
     }
 
     fn is_wrap_line(&self, y: usize) -> bool {
-        self.lines()[y][self.cols - 1]
-            .prop
-            .attr
-            .contains(GlyphAttr::WRAP)
+        let len = self.lines()[y].len();
+        self.lines()[y][len - 1].prop.attr.contains(GlyphAttr::WRAP)
     }
 
     #[inline]

@@ -15,7 +15,7 @@ ioctl_write_ptr_bad!(resizepty, libc::TIOCSWINSZ, libc::winsize);
 pub struct Pty {
     master_fd: RawFd,
     child_pid: Pid,
-    write_buf: VecDeque<Vec<u8>>,
+    write_buf: VecDeque<u8>,
 }
 
 impl Pty {
@@ -71,18 +71,22 @@ impl Pty {
     }
 
     pub fn flush(&mut self) -> Result<()> {
-        while let Some(buf) = self.write_buf.pop_front() {
-            let n = write(self.master_fd, &buf)?;
-            if n == buf.len() {
-                continue;
+        let mut n = write(self.master_fd, self.write_buf.make_contiguous())?;
+        if n == self.write_buf.len() {
+            self.write_buf.clear();
+        } else {
+            while n > 0 {
+                self.write_buf.pop_front();
+                n -= 1;
             }
-            self.write_buf.push_front(buf[n..].to_vec());
         }
         Ok(())
     }
 
-    pub fn write(&mut self, buf: Vec<u8>) {
-        self.write_buf.push_back(buf);
+    pub fn write(&mut self, buf: &[u8]) {
+        for b in buf {
+            self.write_buf.push_back(*b);
+        }
     }
 }
 

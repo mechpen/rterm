@@ -285,7 +285,7 @@ impl<'a> Performer<'a> {
             v.push(0x1b);
             v.push(b'\\');
         }
-        self.term.pty.write(v);
+        self.term.pty.write(&v);
     }
 }
 
@@ -377,7 +377,7 @@ impl<'a> Perform for Performer<'a> {
             (b'Z', None) =>
             // DECID -- Identify Terminal
             {
-                term.pty.write(VTIDEN.to_vec())
+                term.pty.write(VTIDEN)
             }
             (b'c', None) =>
             // RIS -- Reset to initial state
@@ -658,7 +658,7 @@ impl<'a> Perform for Performer<'a> {
             // CUF -- Cursor <n> Forward | HPR -- Cursor <n> Forward
             ('C', None) | ('a', None) => term.move_to(term.c.x + arg0_or(1), term.c.y),
             // DA -- Device Attributes
-            ('c', _) if arg0_or(0) == 0 => term.pty.write(VTIDEN.to_vec()),
+            ('c', _) if arg0_or(0) == 0 => term.pty.write(VTIDEN),
             // CUB -- Cursor <n> Backward
             ('D', None) => term.move_to(term.c.x.saturating_sub(arg0_or(1)), term.c.y),
             // VPA -- Move to <row>
@@ -748,7 +748,7 @@ impl<'a> Perform for Performer<'a> {
             // DSR Device Status Report
             ('n', None) if arg0_or(0) == 6 => {
                 let s = format!("\x1B[{};{}R", term.c.y + 1, term.c.x + 1);
-                term.pty.write(s.as_bytes().to_vec());
+                term.pty.write(s.as_bytes());
             }
             // DCH -- Delete <n> char
             ('P', None) => term.delete_chars(arg0_or(1)),
@@ -775,11 +775,9 @@ impl<'a> Perform for Performer<'a> {
             ('q', Some(b'>')) => {
                 if let Some(arg0) = arg0 {
                     if arg0.get(0) == Some(&0) {
-                        self.term.pty.write(
-                            format!("\x1bP>|{} {}\x1b\\", NAME, VERSION)
-                                .as_bytes()
-                                .to_vec(),
-                        );
+                        self.term
+                            .pty
+                            .write(format!("\x1bP>|{} {}\x1b\\", NAME, VERSION).as_bytes());
                     }
                 }
             }

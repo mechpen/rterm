@@ -420,12 +420,14 @@ impl Win {
         x11::XPending(self.dpy) > 0
     }
 
-    pub fn process_input(&mut self, term: &mut Term) {
+    pub fn process_input(&mut self, term: &mut Term) -> bool {
+        let mut res = false;
         while x11::XPending(self.dpy) > 0 {
             let mut xev = x11::XNextEvent(self.dpy);
             if x11::XFilterEvent(&mut xev, self.win) == x11::True {
                 continue;
             }
+            res = true;
 
             let xev_type = x11::event_type(&xev);
             match xev_type {
@@ -444,6 +446,7 @@ impl Win {
                 _ => println!("event type {:?}", xev_type),
             }
         }
+        res
     }
 
     fn limit<T: Ord>(x: T, min: T, max: T) -> T {
@@ -855,10 +858,11 @@ impl Win {
         cs.append(&mut self.glyph_buf);
 
         while let Some((x, g)) = row.next(&mut self.glyph_buf) {
+            let g = g.resolve(term.is_selected(x, y));
             if g0 != g || compound_glyph {
                 self.draw_cells(&cs, g0, x0 * self.cw, yp);
                 x0 = x;
-                g0 = g.resolve(term.is_selected(x0, y));
+                g0 = g; //.resolve(term.is_selected(x0, y));
                 cs.clear();
             }
             compound_glyph = self.glyph_buf.len() > 1;
@@ -911,7 +915,7 @@ impl Win {
         if self.mode.contains(WinMode::ECHO) {
             term.put_string(term_decode(buf));
         }
-        term.pty.write(buf.to_vec());
+        term.pty.write(buf);
     }
 }
 

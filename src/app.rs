@@ -14,6 +14,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
+/*
+ * draw latency range in ms - from new content/keypress/etc until drawing.
+ * within this range, st draws when content stops arriving (idle). mostly it's
+ * near minlatency, but it waits longer for slow updates to avoid partial draw.
+ * low minlatency will tear/flicker more, as it can "detect" idle too early.
+ */
+const MINLATENCY: f64 = 8.0;
+const MAXLATENCY: f64 = 33.0;
 
 fn is_running() -> bool {
     RUNNING.load(Ordering::Relaxed)
@@ -76,6 +84,10 @@ impl App {
         let mut buf = [0; 8192];
         let mut last_blink = SystemTime::now();
         let blink_duration = Duration::from_millis(500);
+        let mut drawing = false;
+        let mut trigger = SystemTime::now();
+        let mut now;
+        let mut timeout_idle: f64 = -1.0;
 
         while is_running() {
             let blink_elapsed = last_blink.elapsed().map_or_else(|_| blink_duration, |e| e);
@@ -92,8 +104,8 @@ impl App {
             // might be delayed.
             let mut timeout_in = if self.win.is_pending() {
                 TimeVal::milliseconds(0)
-            } else if let Some(to) = blink_duration.checked_sub(blink_elapsed) {
-                TimeVal::milliseconds(to.as_millis() as i64)
+            } else if timeout_idle > 0.0 {
+                TimeVal::nanoseconds((timeout_idle * 1e6) as i64)
             } else {
                 TimeVal::milliseconds(blink_duration.as_millis() as i64)
             };
@@ -103,6 +115,7 @@ impl App {
                 Err(Errno::EINTR) => continue,
                 Err(err) => return Err(err.into()),
             }
+            now = SystemTime::now();
 
             if wfds.contains(pty_fd) {
                 self.term.pty.flush()?;
@@ -111,9 +124,10 @@ impl App {
             self.win.undraw_cursor(&self.term);
 
             // Let pending do it's thing so always try to process events.
-            self.win.process_input(&mut self.term);
+            let mut check_idle = self.win.process_input(&mut self.term);
 
             if rfds.contains(pty_fd) {
+                check_idle = true;
                 let n = self.term.pty.read(&mut buf)?;
                 self.log_pty(&buf[..n])?;
                 self.vte
@@ -123,7 +137,34 @@ impl App {
                 self.win.toggle_blink();
                 last_blink = SystemTime::now();
             }
+            /*
+             * To reduce flicker and tearing, when new content or event
+             * triggers drawing, we first wait a bit to ensure we got
+             * everything, and if nothing new arrives - we draw.
+             * We start with trying to wait minlatency ms. If more content
+             * arrives sooner, we retry with shorter and shorter periods,
+             * and eventually draw even without idle after maxlatency ms.
+             * Typically this results in low latency while interacting,
+             * maximum latency intervals during `cat huge.txt`, and perfect
+             * sync with periodic updates from animations/key-repeats/etc.
+             */
+            if check_idle {
+                if !drawing {
+                    trigger = now;
+                    drawing = true;
+                }
+                if let Ok(tdiff) = now.duration_since(trigger) {
+                    timeout_idle =
+                        ((MAXLATENCY - tdiff.as_millis() as f64) / MAXLATENCY) * MINLATENCY;
+                    //println!("XXXX idle: {}", timeout_idle);
+                    if timeout_idle > 0.0 {
+                        continue; /* we have time, try to find idle */
+                    }
+                }
+            }
+            timeout_idle = -1.0;
             self.win.draw(&mut self.term);
+            drawing = false;
         }
 
         Ok(())
