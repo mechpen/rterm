@@ -163,8 +163,9 @@ impl Term {
         self.lines.resize_with(rows * 2, Vec::new);
         self.lines.shrink_to_fit();
         for line in self.lines.iter_mut() {
-            line.resize(cols, blank_glyph());
-            line.shrink_to_fit();
+            // Account for any grapheme clusters in line.
+            let x = Self::adjust_x_line(line, cols);
+            line.resize(x, blank_glyph());
         }
 
         self.dirty.resize(rows, true);
@@ -260,7 +261,7 @@ impl Term {
         for y in yrange {
             self.dirty[y] = true;
             let mut shrink = 0;
-            let len = self.lines_mut()[y].len();
+            let len = self.lines()[y].len();
             let mut startx = None;
             let mut endx = 0;
             let mut offset = 0;
@@ -274,7 +275,7 @@ impl Term {
                 if (x + shrink) >= len {
                     break;
                 }
-                while self.lines_mut()[y][x + shrink]
+                while self.lines()[y][x + shrink]
                     .prop
                     .attr
                     .contains(GlyphAttr::CLUSTER)
@@ -296,7 +297,7 @@ impl Term {
             }
             if endx + 1 + shrink < len {
                 endx += 1;
-                while self.lines_mut()[y][endx + shrink]
+                while self.lines()[y][endx + shrink]
                     .prop
                     .attr
                     .contains(GlyphAttr::CLUSTER)
@@ -394,28 +395,33 @@ impl Term {
         self.c.wrap_next = false;
     }
 
-    // XXX fix x
     pub fn insert_blanks(&mut self, n: usize) {
         let (x, y) = (self.c.x, self.c.y);
         let n = cmp::min(n, self.cols - x);
 
         let ax = self.adjust_x(y, x);
-        let source = ax..self.adjust_x(y, self.cols - n);
-        let dest = ax + self.adjust_x(y, n);
+        let source = ax..self.lines()[y].len() - n;
+        let dest = ax + n;
         self.lines_mut()[y].copy_within(source, dest);
         self.clear_region(x..x + n, y..=y);
+        let cols = self.cols;
+        let acols = self.adjust_x(y, cols);
+        self.lines_mut()[y].resize(acols, blank_glyph());
     }
 
-    // XXX fix x
     pub fn delete_chars(&mut self, n: usize) {
         let (x, y, cols) = (self.c.x, self.c.y, self.cols);
         let n = cmp::min(n, cols - x);
 
         let ax = self.adjust_x(y, x);
-        let an = self.adjust_x(y, n);
+        let nx = self.adjust_x(y, x + n);
+        let acols = self.lines()[y].len();
+        self.lines_mut()[y].copy_within(nx..acols, ax);
+        // Could have malformed garbage if grapheme clusters were at the end
+        // so just resize down then back to the proper size vs clear_region().
+        self.lines_mut()[y].resize(ax + (acols - nx), blank_glyph());
         let acols = self.adjust_x(y, cols);
-        self.lines_mut()[y].copy_within(ax + an..acols, ax);
-        self.clear_region(cols - n..cols, y..=y);
+        self.lines_mut()[y].resize(acols, blank_glyph());
     }
 
     pub fn put_tabs(&mut self, n: i32) {
@@ -441,10 +447,10 @@ impl Term {
         }
     }
 
-    fn adjust_x(&self, row: usize, mut x: usize) -> usize {
+    fn adjust_x_line(line: &[Glyph], mut x: usize) -> usize {
         let mut i = 0;
         while i <= x {
-            if let Some(g) = self.lines()[row].get(i) {
+            if let Some(g) = line.get(i) {
                 if g.prop.attr.contains(GlyphAttr::CLUSTER) {
                     x += 1;
                 }
@@ -452,6 +458,10 @@ impl Term {
             i += 1;
         }
         x
+    }
+
+    fn adjust_x(&self, row: usize, x: usize) -> usize {
+        Self::adjust_x_line(&self.lines()[row], x)
     }
 
     pub fn put_char(&mut self, c: char) {
@@ -468,12 +478,14 @@ impl Term {
             let y = self.c.y;
             let x = self.adjust_x(y, cols - 1);
             // for wide chars, cursor is not at cols-1
-            self.lines_mut()[y][x] //cols - 1]
-                .prop
-                .attr
-                .insert(GlyphAttr::WRAP);
+            self.lines_mut()[y][x].prop.attr.insert(GlyphAttr::WRAP);
             self.new_line(true);
             self.c.wrap_next = false;
+        }
+        if width == 0 {
+            let y = self.c.y;
+            let x = self.adjust_x(self.c.y, self.c.x);
+            self.lines_mut()[y].insert(x, blank_glyph());
         }
 
         if self.mode.contains(TermMode::INSERT) && self.c.x + width < cols {
@@ -501,6 +513,20 @@ impl Term {
             }
             lines[y][x].prop = prop;
             lines[y][x].c = c;
+            let mut shrink = 0;
+            let mut i = x + 1;
+            while let Some(g) = lines[y].get(i) {
+                if !g.prop.attr.contains(GlyphAttr::CLUSTER) {
+                    break;
+                }
+                i += 1;
+                shrink += 1;
+            }
+            if shrink > 0 {
+                let startx = x + 1;
+                lines[y].copy_within(startx + shrink.., startx);
+                lines[y].resize(lines[y].len() - shrink, blank_glyph());
+            }
             if width == 0 {
                 lines[y][x].prop.attr.insert(GlyphAttr::CLUSTER);
             } else {
@@ -799,5 +825,530 @@ impl Term {
         } else {
             &mut self.lines[0..self.rows]
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resize() -> Result<()> {
+        let mut term = Term::new(80, 25)?;
+        assert_eq!(term.lines.len(), 50); // both primary and alternate screen.
+        for l in &term.lines {
+            assert_eq!(l.len(), 80);
+        }
+        term.resize(100, 30);
+        assert_eq!(term.lines.len(), 60); // both primary and alternate screen.
+        for l in &term.lines {
+            assert_eq!(l.len(), 100);
+        }
+        term.resize(50, 10);
+        assert_eq!(term.lines.len(), 20); // both primary and alternate screen.
+        for l in &term.lines {
+            assert_eq!(l.len(), 50);
+        }
+
+        term.resize(80, 25);
+        assert_eq!(term.lines.len(), 50);
+        term.move_to(0, 2);
+        for _i in 0..80 {
+            term.put_string("e\u{0300}\u{0302}".to_string());
+        }
+        assert_eq!(term.lines[1].len(), 80);
+        assert_eq!(term.lines[2].len(), 240);
+        assert_eq!(term.lines[3].len(), 80);
+        term.resize(40, 25);
+        assert_eq!(term.lines[1].len(), 40);
+        assert_eq!(term.lines[2].len(), 120);
+        assert_eq!(term.lines[3].len(), 40);
+        let mut row = term.get_row(1);
+        let mut max_x = 0;
+        let mut glyph = Vec::new();
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 1);
+            assert_eq!(glyph[0], ' ');
+            max_x = x;
+        }
+        assert_eq!(max_x, 39);
+        let mut row = term.get_row(2);
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 3);
+            assert_eq!(glyph[0], 'e');
+            assert_eq!(glyph[1] as u32, 0x0300);
+            assert_eq!(glyph[2] as u32, 0x0302);
+            max_x = x;
+        }
+        assert_eq!(max_x, 39);
+        Ok(())
+    }
+
+    #[test]
+    fn test_clusters() -> Result<()> {
+        let mut term = Term::new(80, 25)?;
+        let mut max_x = 0;
+        term.move_to(10, 5);
+        term.put_string("e\u{0300}\u{0302}".to_string());
+        assert_eq!(term.lines.len(), 50);
+        assert_eq!(term.lines[4].len(), 80);
+        assert_eq!(term.lines[5].len(), 82);
+        assert_eq!(term.lines[6].len(), 80);
+        let mut row = term.get_row(5);
+        let mut glyph = Vec::new();
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            if x == 10 {
+                assert_eq!(glyph.len(), 3);
+                assert_eq!(glyph[0], 'e');
+                assert_eq!(glyph[1] as u32, 0x0300);
+                assert_eq!(glyph[2] as u32, 0x0302);
+            } else {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+        term.move_to(0, 3);
+        for _i in 0..80 {
+            term.put_string("e\u{0300}\u{0302}".to_string());
+        }
+        assert_eq!(term.lines.len(), 50);
+        assert_eq!(term.lines[2].len(), 80);
+        assert_eq!(term.lines[3].len(), 240);
+        assert_eq!(term.lines[4].len(), 80);
+        assert_eq!(term.lines[5].len(), 82);
+        assert_eq!(term.lines[6].len(), 80);
+        let mut row = term.get_row(3);
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 3);
+            assert_eq!(glyph[0], 'e');
+            assert_eq!(glyph[1] as u32, 0x0300);
+            assert_eq!(glyph[2] as u32, 0x0302);
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+
+        term.move_to(0, 5);
+        for _i in 0..160 {
+            term.put_string("e\u{0300}\u{0302}".to_string());
+        }
+        assert_eq!(term.lines.len(), 50);
+        assert_eq!(term.lines[2].len(), 80);
+        assert_eq!(term.lines[3].len(), 240);
+        assert_eq!(term.lines[4].len(), 80);
+        assert_eq!(term.lines[6].len(), 240);
+        assert_eq!(term.lines[7].len(), 80);
+        let mut row = term.get_row(3);
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 3);
+            assert_eq!(glyph[0], 'e');
+            assert_eq!(glyph[1] as u32, 0x0300);
+            assert_eq!(glyph[2] as u32, 0x0302);
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+        let mut row = term.get_row(4);
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 1);
+            assert_eq!(glyph[0], ' ');
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+        let mut row = term.get_row(5);
+        while let Some((x, prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 3);
+            assert_eq!(glyph[0], 'e');
+            assert_eq!(glyph[1] as u32, 0x0300);
+            assert_eq!(glyph[2] as u32, 0x0302);
+            if x == 79 {
+                assert_eq!(true, prop.attr.contains(GlyphAttr::WRAP));
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+        let mut row = term.get_row(6);
+        while let Some((x, prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 3);
+            assert_eq!(glyph[0], 'e');
+            assert_eq!(glyph[1] as u32, 0x0300);
+            assert_eq!(glyph[2] as u32, 0x0302);
+            if x == 79 {
+                assert_eq!(false, prop.attr.contains(GlyphAttr::WRAP));
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+        let mut row = term.get_row(7);
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 1);
+            assert_eq!(glyph[0], ' ');
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+        term.put_string("e\u{0300}\u{0302}".to_string());
+        let mut row = term.get_row(6);
+        while let Some((x, prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 3);
+            assert_eq!(glyph[0], 'e');
+            assert_eq!(glyph[1] as u32, 0x0300);
+            assert_eq!(glyph[2] as u32, 0x0302);
+            if x == 79 {
+                assert_eq!(true, prop.attr.contains(GlyphAttr::WRAP));
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+        let mut row = term.get_row(7);
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            if x == 0 {
+                assert_eq!(glyph.len(), 3);
+                assert_eq!(glyph[0], 'e');
+                assert_eq!(glyph[1] as u32, 0x0300);
+                assert_eq!(glyph[2] as u32, 0x0302);
+            } else {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+
+        // Go ahead an check reset.
+        term.reset();
+        assert_eq!(term.lines.len(), 50);
+        for y in 0..25 {
+            assert_eq!(term.lines[y].len(), 80);
+            let mut row = term.get_row(y);
+            max_x = 0;
+            while let Some((x, _prop)) = row.next(&mut glyph) {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+                max_x = x;
+            }
+            assert_eq!(max_x, 79);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_delete_chars() -> Result<()> {
+        let mut term = Term::new(80, 25)?;
+        let mut max_x;
+        let mut glyph = Vec::new();
+        term.move_to(0, 0);
+        for _i in 0..80 {
+            term.put_string("e\u{0300}\u{0302}".to_string());
+        }
+        term.move_to(0, 0);
+        term.delete_chars(80);
+        term.move_to(10, 10);
+        for _i in 0..8 {
+            term.put_string("x".to_string());
+        }
+
+        term.move_to(10, 10);
+        term.delete_chars(8);
+        assert_eq!(term.lines.len(), 50);
+        for y in 0..25 {
+            assert_eq!(term.lines[y].len(), 80);
+            let mut row = term.get_row(y);
+            max_x = 0;
+            while let Some((x, _prop)) = row.next(&mut glyph) {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+                max_x = x;
+            }
+            assert_eq!(max_x, 79);
+        }
+
+        term.move_to(10, 2);
+        for _i in 0..10 {
+            term.put_string("e\u{0300}\u{0302}".to_string());
+        }
+        for _i in 0..10 {
+            term.put_char('x');
+        }
+        term.move_to(10, 2);
+        term.delete_chars(10);
+        let mut row = term.get_row(2);
+        max_x = 0;
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 1);
+            if x > 9 && x < 20 {
+                assert_eq!(glyph[0], 'x');
+            } else {
+                assert_eq!(glyph[0], ' ');
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+
+        term.reset();
+        term.move_to(0, 5);
+        for i in 0..80 {
+            if i % 2 == 1 {
+                term.put_string("e\u{0300}\u{0302}".to_string());
+            } else {
+                term.put_char('x');
+            }
+        }
+        for i in 0..80 {
+            let i = 79 - i;
+            if i % 2 == 1 {
+                term.move_to(i, 5);
+                term.delete_chars(1);
+            }
+        }
+        let mut row = term.get_row(5);
+        max_x = 0;
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 1);
+            if x < 40 {
+                assert_eq!(glyph[0], 'x');
+            } else {
+                assert_eq!(glyph[0], ' ');
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+
+        term.reset();
+        term.move_to(0, 5);
+        for i in 0..80 {
+            if i % 2 == 1 {
+                term.put_string("e\u{0300}".to_string());
+            } else {
+                term.put_char('x');
+            }
+        }
+        assert_eq!(term.lines()[5].len(), 120);
+        for i in 0..80 {
+            let i = 79 - i;
+            if i % 2 == 1 {
+                term.move_to(i, 5);
+                term.delete_chars(1);
+            }
+        }
+        assert_eq!(term.lines()[5].len(), 80);
+        let mut row = term.get_row(5);
+        max_x = 0;
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            assert_eq!(glyph.len(), 1);
+            if x < 40 {
+                assert_eq!(glyph[0], 'x');
+            } else {
+                assert_eq!(glyph[0], ' ');
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+
+        term.reset();
+        term.move_to(0, 5);
+        for i in 0..80 {
+            if i % 2 == 1 {
+                term.put_string("e\u{0300}".to_string());
+            } else {
+                term.put_char('x');
+            }
+        }
+        assert_eq!(term.lines()[5].len(), 120);
+        for i in 0..80 {
+            let i = 79 - i;
+            if i % 2 == 0 {
+                term.move_to(i, 5);
+                term.delete_chars(1);
+            }
+        }
+        assert_eq!(term.lines()[5].len(), 120);
+        let mut row = term.get_row(5);
+        max_x = 0;
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            if x < 40 {
+                assert_eq!(glyph.len(), 2);
+                assert_eq!(glyph[0], 'e');
+                assert_eq!(glyph[1], '\u{0300}');
+            } else {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+        Ok(())
+    }
+
+    #[test]
+    fn test_insert_blanks() -> Result<()> {
+        let mut term = Term::new(80, 25)?;
+        let mut max_x;
+        let mut glyph = Vec::new();
+        term.move_to(0, 0);
+        assert_eq!(term.lines()[0].len(), 80);
+        term.insert_blanks(80);
+        assert_eq!(term.lines()[0].len(), 80);
+        term.move_to(0, 0);
+        for _i in 0..80 {
+            term.put_string("e\u{0300}\u{0302}".to_string());
+        }
+        assert_eq!(term.lines()[0].len(), 240);
+        term.move_to(0, 0);
+        term.insert_blanks(80);
+        assert_eq!(term.lines()[0].len(), 80);
+        for y in 0..25 {
+            assert_eq!(term.lines[y].len(), 80);
+            let mut row = term.get_row(y);
+            max_x = 0;
+            while let Some((x, _prop)) = row.next(&mut glyph) {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+                max_x = x;
+            }
+            assert_eq!(max_x, 79);
+        }
+
+        term.reset();
+        term.move_to(0, 5);
+        for _i in 0..80 {
+            term.put_string("e\u{0302}".to_string());
+        }
+        assert_eq!(term.lines()[5].len(), 160);
+        term.move_to(0, 5);
+        term.insert_blanks(80);
+        assert_eq!(term.lines()[5].len(), 80);
+        for y in 0..25 {
+            assert_eq!(term.lines[y].len(), 80);
+            let mut row = term.get_row(y);
+            max_x = 0;
+            while let Some((x, _prop)) = row.next(&mut glyph) {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+                max_x = x;
+            }
+            assert_eq!(max_x, 79);
+        }
+
+        term.move_to(0, 0);
+        for _i in 0..80 {
+            term.put_string("e\u{0300}\u{0302}".to_string());
+        }
+        assert_eq!(term.lines()[0].len(), 240);
+        term.move_to(0, 0);
+        term.insert_blanks(40);
+        assert_eq!(term.lines()[0].len(), 160);
+        let mut row = term.get_row(0);
+        max_x = 0;
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            if x < 40 {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+            } else {
+                assert_eq!(glyph.len(), 3);
+                assert_eq!(glyph[0], 'e');
+                assert_eq!(glyph[1], '\u{0300}');
+                assert_eq!(glyph[2], '\u{0302}');
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+
+        term.move_to(0, 0);
+        for _i in 0..80 {
+            term.put_string("e\u{0300}\u{0302}".to_string());
+        }
+        assert_eq!(term.lines()[0].len(), 240);
+        term.move_to(40, 0);
+        term.insert_blanks(40);
+        assert_eq!(term.lines()[0].len(), 160);
+        let mut row = term.get_row(0);
+        max_x = 0;
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            if x < 40 {
+                assert_eq!(glyph.len(), 3);
+                assert_eq!(glyph[0], 'e');
+                assert_eq!(glyph[1], '\u{0300}');
+                assert_eq!(glyph[2], '\u{0302}');
+            } else {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+
+        term.move_to(0, 0);
+        for _i in 0..80 {
+            term.put_string("e\u{0300}".to_string());
+        }
+        assert_eq!(term.lines()[0].len(), 160);
+        term.move_to(40, 0);
+        term.insert_blanks(40);
+        /*let mut row = term.get_row(0);
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            println!("XXXX {} {:?}", x, glyph)
+        }*/
+        assert_eq!(term.lines()[0].len(), 120);
+        let mut row = term.get_row(0);
+        max_x = 0;
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            if x < 40 {
+                assert_eq!(glyph.len(), 2);
+                assert_eq!(glyph[0], 'e');
+                assert_eq!(glyph[1], '\u{0300}');
+            } else {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+
+        term.move_to(0, 0);
+        for _i in 0..80 {
+            term.put_string("e\u{0300}\u{0302}".to_string());
+        }
+        assert_eq!(term.lines()[0].len(), 240);
+        term.move_to(10, 0);
+        term.insert_blanks(10);
+        assert_eq!(term.lines()[0].len(), 220);
+        let mut row = term.get_row(0);
+        max_x = 0;
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            if x < 10 || x > 19 {
+                assert_eq!(glyph.len(), 3);
+                assert_eq!(glyph[0], 'e');
+                assert_eq!(glyph[1], '\u{0300}');
+                assert_eq!(glyph[2], '\u{0302}');
+            } else {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+
+        term.move_to(0, 0);
+        for _i in 0..80 {
+            term.put_char('x');
+        }
+        assert_eq!(term.lines()[0].len(), 80);
+        term.move_to(10, 0);
+        term.insert_blanks(10);
+        assert_eq!(term.lines()[0].len(), 80);
+        let mut row = term.get_row(0);
+        max_x = 0;
+        while let Some((x, _prop)) = row.next(&mut glyph) {
+            if x < 10 || x > 19 {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], 'x');
+            } else {
+                assert_eq!(glyph.len(), 1);
+                assert_eq!(glyph[0], ' ');
+            }
+            max_x = x;
+        }
+        assert_eq!(max_x, 79);
+        Ok(())
     }
 }
