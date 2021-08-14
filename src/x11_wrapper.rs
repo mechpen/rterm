@@ -67,8 +67,6 @@ pub use xlib::ShiftMask;
 pub use xlib::XButtonEvent;
 
 pub use xlib::MotionNotify as MOTION_NOTIFY;
-pub use xlib::XMotionEvent;
-
 pub use xlib::Expose as EXPOSE;
 
 pub use xlib::VisibilityFullyObscured;
