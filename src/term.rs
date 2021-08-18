@@ -434,11 +434,7 @@ impl Term {
         self.sel.ob.y = cmp::min(y, self.rows - 1);
         self.sel.oe.x = self.sel.ob.x;
         self.sel.oe.y = self.sel.ob.y;
-
-        match self.sel.mode {
-            SnapMode::None => (),
-            _ => self.normalize_selection(),
-        }
+        self.normalize_selection();
     }
 
     pub fn extend_selection(&mut self, x: usize, y: usize) {
