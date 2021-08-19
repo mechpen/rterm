@@ -493,13 +493,19 @@ impl Win {
         }
 
         if !self.mode.contains(WinMode::MOUSEX10) {
-            button += if (xev.state & x11::ShiftMask) != 0 { 4 } else { 0 }
-                + if (xev.state & x11::Mod4Mask) != 0 { 8 } else { 0 }
-                + if (xev.state & x11::ControlMask) != 0 {
-                    16
-                } else {
-                    0
-                };
+            button += if (xev.state & x11::ShiftMask) != 0 {
+                4
+            } else {
+                0
+            } + if (xev.state & x11::Mod4Mask) != 0 {
+                8
+            } else {
+                0
+            } + if (xev.state & x11::ControlMask) != 0 {
+                16
+            } else {
+                0
+            };
         }
 
         let buf;
@@ -657,7 +663,8 @@ impl Win {
                 &mut nitems,
                 &mut rem,
                 &mut data,
-            ) != 0 {
+            ) != 0
+            {
                 println!("XGetWindowProperty error");
                 return;
             }
@@ -731,7 +738,8 @@ impl Win {
             x11::True,
             0,
             &mut xev1 as *mut _ as *mut _,
-        ) == 0 {
+        ) == 0
+        {
             println!("XSendEvent error");
         }
     }
@@ -847,7 +855,10 @@ impl Win {
     }
 
     fn term_point(&self, xp: i32, yp: i32) -> (usize, usize) {
-        ((xp as usize - BORDERPX) / self.cw, (yp as usize - BORDERPX)/ self.ch)
+        (
+            (xp as usize - BORDERPX) / self.cw,
+            (yp as usize - BORDERPX) / self.ch,
+        )
     }
 
     fn selection_set(&mut self, time: x11::Time, term: &mut Term) {

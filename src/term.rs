@@ -56,11 +56,19 @@ pub struct TermRow<'row> {
     row: &'row [Glyph],
     pos: usize,
     x: usize,
+    dummies: usize,
+    last_prop: Option<GlyphProp>,
 }
 
 impl<'row> TermRow<'row> {
     pub fn new(row: &[Glyph]) -> TermRow {
-        TermRow { row, pos: 0, x: 0 }
+        TermRow {
+            row,
+            pos: 0,
+            x: 0,
+            dummies: 0,
+            last_prop: None,
+        }
     }
 
     /// Get next glyph and properties from a row.
@@ -68,6 +76,18 @@ impl<'row> TermRow<'row> {
     /// just one but maybe more).  Returns the current row number (0 based) and the
     /// glyph properties for the glyph or None if the row has been traversed.
     pub fn next(&mut self, glyph: &mut Vec<char>) -> Option<(usize, GlyphProp)> {
+        if self.dummies > 0 {
+            self.dummies -= 1;
+            if let Some(g) = self.last_prop {
+                glyph.clear();
+                glyph.push(' ');
+                let x = self.x;
+                self.x += 1;
+                return Some((x, g));
+            } else {
+                return None;
+            }
+        }
         let len = self.row.len();
         if self.pos >= len {
             return None;
@@ -77,6 +97,15 @@ impl<'row> TermRow<'row> {
         glyph.clear();
         let prop = self.row[self.pos].prop;
         glyph.push(self.row[self.pos].c);
+        if self.row[self.pos].prop.attr.contains(GlyphAttr::WIDE) {
+            let mut i = self.pos + 1;
+            self.dummies = 0;
+            self.last_prop = Some(prop);
+            while i < len && self.row[self.pos].prop.attr.contains(GlyphAttr::DUMMY) {
+                self.dummies += 1;
+                i += 1;
+            }
+        }
         self.pos += 1;
         while self.pos < len && self.row[self.pos].prop.attr.contains(GlyphAttr::CLUSTER) {
             glyph.push(self.row[self.pos].c);
@@ -464,6 +493,60 @@ impl Term {
         Self::adjust_x_line(&self.lines()[row], x)
     }
 
+    /// Has a width been set for the glyph at (x, y)?
+    pub fn _has_width(&self, x: usize, y: usize) -> bool {
+        let x = self.adjust_x(y, x);
+        let attr = self.lines()[y][x].prop.attr;
+        attr.contains(GlyphAttr::WIDE) | attr.contains(GlyphAttr::SINGLE)
+    }
+
+    /// Sets the width of the char at (x, y) to width.  This is intended to be
+    /// called from the rendering code when the actual glyph size is known.
+    pub fn _set_width(&mut self, x: usize, y: usize, width: usize) {
+        if width == 0 {
+            return;
+        }
+        // XXX if x + width > cols then do something...
+        let x = self.adjust_x(y, x);
+        let lines = self.lines_mut();
+        if width == 1 {
+            lines[y][x].prop.attr.insert(GlyphAttr::SINGLE);
+            return;
+        }
+        for x2 in x..x + width {
+            if !lines[y][x2].prop.attr.contains(GlyphAttr::CLUSTER) {
+                // Only blank out the codepoint if not part of a cluster.
+                lines[y][x2].c = ' ';
+            }
+            lines[y][x2].prop.attr.insert(GlyphAttr::DUMMY);
+        }
+        // Make sure we do not have any leftovers of a previous cluster or wide char.
+        let mut i = x + width;
+        let mut shrink = 0;
+        while let Some(g) = lines[y].get(i) {
+            if g.prop.attr.contains(GlyphAttr::CLUSTER) {
+                shrink += 1;
+            } else {
+                break;
+            }
+            i += 1;
+        }
+        if shrink > 0 {
+            let startx = x + width;
+            lines[y].copy_within(startx + shrink.., startx);
+            lines[y].resize(lines[y].len() - shrink, blank_glyph());
+        }
+        i = x + width;
+        while let Some(g) = lines[y].get_mut(i) {
+            if g.prop.attr.contains(GlyphAttr::DUMMY) {
+                g.prop.attr.remove(GlyphAttr::DUMMY);
+            } else {
+                break;
+            }
+            i += 1;
+        }
+    }
+
     pub fn put_char(&mut self, c: char) {
         let width = if let Some(w) = UnicodeWidthChar::width(c) {
             w
@@ -482,6 +565,8 @@ impl Term {
             self.new_line(true);
             self.c.wrap_next = false;
         }
+        // This should indicate a codepoint that combines with the previous to
+        // form a grapheme cluster.
         if width == 0 {
             let y = self.c.y;
             let x = self.adjust_x(self.c.y, self.c.x);
@@ -530,7 +615,9 @@ impl Term {
             if width == 0 {
                 lines[y][x].prop.attr.insert(GlyphAttr::CLUSTER);
             } else {
+                // XXX Probably remove this and only use set_width() from renderer.
                 for x2 in x + 1..x + width {
+                    lines[y][x2].c = ' ';
                     lines[y][x2].prop.attr.insert(GlyphAttr::DUMMY);
                 }
             }

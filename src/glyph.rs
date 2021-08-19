@@ -20,11 +20,17 @@ bitflags! {
         // at line wrap
         const WRAP       = 1 << 8;
 
+        // Indicates a wide glyph, an extra column with the DUMMY flag set will
+        // be there for the colums past 1 (ie, [WIDE, DUMMY...]).
         const WIDE       = 1 << 9;
         // dummy for wide chars
         const DUMMY      = 1 << 10;
+        // Indicates a single column glyph, exists so the render code can detemine
+        // if a width has been set (if neither this or WIDE is set then the glyph
+        // has not been sized).
+        const SINGLE     = 1 << 11;
         // for codepoints that are part of a grapheme cluster (past the first).
-        const CLUSTER    = 1 << 11;
+        const CLUSTER    = 1 << 12;
     }
 }
 
