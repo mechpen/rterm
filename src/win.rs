@@ -41,11 +41,9 @@ bitflags! {
 }
 
 // FIXME, this can only be 0 until impemented everywhere.
-const BORDERPX: u16 = 0;
+const BORDERPX: usize = 0;
 
-/*
- * thickness of underline and bar cursors
- */
+// thickness of underline and bar cursors
 const CURSORTHICKNESS: usize = 2;
 
 const FORCEMOUSEMOD: u32 = x11::ShiftMask;
@@ -71,8 +69,6 @@ pub struct Win {
     cw: usize,
     ch: usize,
     ca: usize,
-    width: usize,
-    height: usize,
     old_mouse_x: usize,
     old_mouse_y: usize,
     old_mouse_button: u32,
@@ -220,8 +216,6 @@ impl Win {
             cw,
             ch,
             ca,
-            width,
-            height,
             old_mouse_x: 0,
             old_mouse_y: 0,
             old_mouse_button: 0,
@@ -383,8 +377,8 @@ impl Win {
                     x11::XftDrawRect(
                         self.draw,
                         &drawcol,
-                        BORDERPX as usize + x * self.cw,
-                        BORDERPX as usize + (y + 1) * self.ch - CURSORTHICKNESS,
+                        BORDERPX + x * self.cw,
+                        BORDERPX + (y + 1) * self.ch - CURSORTHICKNESS,
                         self.cw,
                         CURSORTHICKNESS,
                     );
@@ -398,8 +392,8 @@ impl Win {
                     x11::XftDrawRect(
                         self.draw,
                         &drawcol,
-                        BORDERPX as usize + x * self.cw,
-                        BORDERPX as usize + y * self.ch,
+                        BORDERPX + x * self.cw,
+                        BORDERPX + y * self.ch,
                         CURSORTHICKNESS,
                         self.ch,
                     );
@@ -450,37 +444,12 @@ impl Win {
         res
     }
 
-    fn limit<T: Ord>(x: T, min: T, max: T) -> T {
-        if x < min {
-            min
-        } else if x > max {
-            max
-        } else {
-            x
-        }
-    }
-
-    fn evcol(&self, e: &x11::XEvent) -> usize {
-        let mut x = unsafe { e.button.x - BORDERPX as i32 };
-        x = Self::limit(x, 0, (self.width - 1) as i32);
-        x as usize / self.cw
-    }
-
-    fn evrow(&self, e: &x11::XEvent) -> usize {
-        let mut y = unsafe { e.button.y - BORDERPX as i32 };
-        y = Self::limit(y, 0, (self.height - 1) as i32);
-        y as usize / self.ch
-    }
-
-    fn mousereport(&mut self, e: x11::XEvent, term: &mut Term, pty: &mut Pty) {
-        let x = self.evcol(&e);
-        let y = self.evrow(&e);
-        let mut button = unsafe { e.button.button };
-        let state = unsafe { e.button.state };
-        let btype = unsafe { e.button.type_ };
+    fn mouse_report(&mut self, xev: &x11::XButtonEvent, term: &mut Term, pty: &mut Pty) {
+        let (x, y) = self.term_point(xev.x, xev.y);
+        let mut button = xev.button;
 
         /* from urxvt */
-        if btype == x11::MOTION_NOTIFY {
+        if xev.type_ == x11::MOTION_NOTIFY {
             if x == self.old_mouse_x && y == self.old_mouse_y {
                 return;
             }
@@ -497,7 +466,7 @@ impl Win {
             self.old_mouse_x = x;
             self.old_mouse_y = y;
         } else {
-            if !self.mode.contains(WinMode::MOUSESGR) && btype == x11::BUTTON_RELEASE {
+            if !self.mode.contains(WinMode::MOUSESGR) && xev.type_ == x11::BUTTON_RELEASE {
                 button = 3;
             } else {
                 button -= x11::Button1;
@@ -507,11 +476,11 @@ impl Win {
                     button += 64 - 3;
                 }
             }
-            if btype == x11::BUTTON_PRESS {
+            if xev.type_ == x11::BUTTON_PRESS {
                 self.old_mouse_button = button;
                 self.old_mouse_x = x;
                 self.old_mouse_y = y;
-            } else if btype == x11::BUTTON_RELEASE {
+            } else if xev.type_ == x11::BUTTON_RELEASE {
                 self.old_mouse_button = 3;
                 /* MODE_MOUSEX10: no button release reporting */
                 if self.mode.contains(WinMode::MOUSEX10) {
@@ -524,9 +493,9 @@ impl Win {
         }
 
         if !self.mode.contains(WinMode::MOUSEX10) {
-            button += if (state & x11::ShiftMask) != 0 { 4 } else { 0 }
-                + if (state & x11::Mod4Mask) != 0 { 8 } else { 0 }
-                + if (state & x11::ControlMask) != 0 {
+            button += if (xev.state & x11::ShiftMask) != 0 { 4 } else { 0 }
+                + if (xev.state & x11::Mod4Mask) != 0 { 8 } else { 0 }
+                + if (xev.state & x11::ControlMask) != 0 {
                     16
                 } else {
                     0
@@ -540,7 +509,7 @@ impl Win {
                 button,
                 x + 1,
                 y + 1,
-                if btype == x11::BUTTON_RELEASE {
+                if xev.type_ == x11::BUTTON_RELEASE {
                     'm'
                 } else {
                     'M'
@@ -608,11 +577,11 @@ impl Win {
         }
         pty.resize(cols, rows).expect("Failed to resize pty!");
 
-        self.width = term.cols * self.cw;
-        self.height = term.rows * self.ch;
+        let width = term.cols * self.cw;
+        let height = term.rows * self.ch;
         let depth = x11::XDefaultDepth(self.dpy, self.scr);
         x11::XFreePixmap(self.dpy, self.buf);
-        self.buf = x11::XCreatePixmap(self.dpy, self.win, self.width, self.height, depth);
+        self.buf = x11::XCreatePixmap(self.dpy, self.win, width, height, depth);
         x11::XftDrawChange(self.draw, self.buf);
     }
 
@@ -627,23 +596,21 @@ impl Win {
 
     // FIXME: select rectangle
     fn motion_notify(&mut self, xev: x11::XEvent, term: &mut Term, pty: &mut Pty) {
-        if self.mode.intersects(WinMode::MOUSE) && unsafe { xev.button.state & FORCEMOUSEMOD } == 0
-        {
-            self.mousereport(xev, term, pty);
+        let xev: &x11::XButtonEvent = x11::cast_event(&xev);
+        if self.mode.intersects(WinMode::MOUSE) && xev.state & FORCEMOUSEMOD == 0 {
+            self.mouse_report(xev, term, pty);
             return;
         }
-        let xev: &x11::XMotionEvent = x11::cast_event(&xev);
         let (x, y) = self.term_point(xev.x, xev.y);
         term.extend_selection(x, y);
     }
 
     fn button_press(&mut self, xev: x11::XEvent, term: &mut Term, pty: &mut Pty) {
-        if self.mode.intersects(WinMode::MOUSE) && unsafe { xev.button.state & FORCEMOUSEMOD } == 0
-        {
-            self.mousereport(xev, term, pty);
+        let xev: &x11::XButtonEvent = x11::cast_event(&xev);
+        if self.mode.intersects(WinMode::MOUSE) && xev.state & FORCEMOUSEMOD == 0 {
+            self.mouse_report(xev, term, pty);
             return;
         }
-        let xev: &x11::XButtonEvent = x11::cast_event(&xev);
         if xev.button == 1 {
             let (x, y) = self.term_point(xev.x, xev.y);
             term.start_selection(x, y, self.sel_snap.click());
@@ -651,12 +618,11 @@ impl Win {
     }
 
     fn button_release(&mut self, xev: x11::XEvent, term: &mut Term, pty: &mut Pty) {
-        if self.mode.intersects(WinMode::MOUSE) && unsafe { xev.button.state & FORCEMOUSEMOD } == 0
-        {
-            self.mousereport(xev, term, pty);
+        let xev: &x11::XButtonEvent = x11::cast_event(&xev);
+        if self.mode.intersects(WinMode::MOUSE) && xev.state & FORCEMOUSEMOD == 0 {
+            self.mouse_report(xev, term, pty);
             return;
         }
-        let xev: &x11::XButtonEvent = x11::cast_event(&xev);
         match xev.button {
             2 => self.selection_paste(),
             1 => self.selection_set(xev.time, term),
@@ -691,8 +657,7 @@ impl Win {
                 &mut nitems,
                 &mut rem,
                 &mut data,
-            ) != 0
-            {
+            ) != 0 {
                 println!("XGetWindowProperty error");
                 return;
             }
@@ -766,8 +731,7 @@ impl Win {
             x11::True,
             0,
             &mut xev1 as *mut _ as *mut _,
-        ) == 0
-        {
+        ) == 0 {
             println!("XSendEvent error");
         }
     }
@@ -883,7 +847,7 @@ impl Win {
     }
 
     fn term_point(&self, xp: i32, yp: i32) -> (usize, usize) {
-        (xp as usize / self.cw, yp as usize / self.ch)
+        ((xp as usize - BORDERPX) / self.cw, (yp as usize - BORDERPX)/ self.ch)
     }
 
     fn selection_set(&mut self, time: x11::Time, term: &mut Term) {

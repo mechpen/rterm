@@ -596,22 +596,23 @@ impl Term {
             self.clear_selection();
         }
 
-        self.sel.mode = mode;
         self.sel.ob.x = cmp::min(x, self.cols - 1);
         self.sel.ob.y = cmp::min(y, self.rows - 1);
         self.sel.oe.x = self.sel.ob.x;
         self.sel.oe.y = self.sel.ob.y;
 
-        match self.sel.mode {
-            SnapMode::None => (),
-            _ => self.normalize_selection(),
-        }
+        self.sel.mode = mode;
+        self.sel.empty = self.sel.mode == SnapMode::None;
+        self.normalize_selection();
     }
 
     pub fn extend_selection(&mut self, x: usize, y: usize) {
         self.clear_selection();
+
         self.sel.oe.x = cmp::min(x, self.cols - 1);
         self.sel.oe.y = cmp::min(y, self.rows - 1);
+
+        self.sel.empty = false;
         self.normalize_selection();
     }
 
@@ -709,7 +710,6 @@ impl Term {
         }
 
         self.set_dirty(nb.y..=ne.y);
-        self.sel.empty = false;
         self.sel.nb = nb;
         self.sel.ne = ne;
     }
