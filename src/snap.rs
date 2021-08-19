@@ -9,6 +9,7 @@ pub fn is_delim(c: char) -> bool {
 const DOUBLE_CLICK_TIMEOUT: Duration = Duration::from_millis(300);
 const TRIPLE_CLICK_TIMEOUT: Duration = Duration::from_millis(600);
 
+#[derive(PartialEq)]
 pub enum SnapMode {
     None,
     Word,
