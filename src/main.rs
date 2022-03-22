@@ -1,52 +1,27 @@
 extern crate rterm;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+use clap::Parser;
 use rterm::app::App;
-use std::env;
 
-fn usage() {
-    println!("usage: rterm [-v] [-g geometry] [-f font] [-o file]");
+#[derive(Parser)]
+#[clap(version, about)]
+struct AppArg {
+    #[clap(short, long)]
+    geometry: Option<String>,
+    #[clap(short, long)]
+    font: Option<String>,
+    #[clap(short = 'o', long)]
+    log: Option<String>,
 }
 
 fn _main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-
-    let mut geometry: Option<&str> = None;
-    let mut font: Option<&str> = None;
-    let mut log: Option<&str> = None;
-
-    let mut i = 1;
-    while i < args.len() {
-        let arg = args[i];
-        i += 1;
-
-        if arg == "-v" {
-            println!("rterm-{}", env!("CARGO_PKG_VERSION"));
-            return Ok(());
-        }
-        if arg == "-g" {
-            geometry = Some(args[i]);
-            i += 1;
-            continue;
-        }
-        if arg == "-f" {
-            font = Some(args[i]);
-            i += 1;
-            continue;
-        }
-        if arg == "-o" {
-            log = Some(args[i]);
-            i += 1;
-            continue;
-        }
-        if arg.starts_with('-') {
-            usage();
-            return Err(anyhow!("invalid option"));
-        }
-    }
-
-    let mut app = App::new(geometry, font, log)?;
+    let arg: AppArg = AppArg::parse();
+    let mut app = App::new(
+        arg.geometry.as_deref(),
+        arg.font.as_deref(),
+        arg.log.as_deref(),
+    )?;
     app.run()?;
 
     Ok(())
