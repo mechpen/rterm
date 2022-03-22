@@ -147,6 +147,7 @@ pub struct Term {
     tabs: Vec<bool>,
     mode: TermMode,
     sel: Selection,
+    titles: Vec<String>,
 }
 
 impl Term {
@@ -166,6 +167,7 @@ impl Term {
             sel: Selection::new(),
             saved_c: None,
             saved_alt_c: None,
+            titles: Vec::new(),
         };
 
         term.resize(cols, rows);
@@ -676,6 +678,14 @@ impl Term {
 
     pub fn set_tab(&mut self, x: usize) {
         self.tabs[x] = true;
+    }
+
+    pub fn push_title(&mut self, title: String) {
+        self.titles.push(title);
+    }
+
+    pub fn pop_title(&mut self) -> Option<String> {
+        return self.titles.pop();
     }
 
     pub fn start_selection(&mut self, x: usize, y: usize, mode: SnapMode) {

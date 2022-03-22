@@ -313,8 +313,12 @@ impl Win {
         x11::xseticontitle(self.dpy, self.win, self.netwmiconname, title);
     }
 
-    pub fn settitle(&self, title: &str) {
+    pub fn settitle(&mut self, title: &str) {
         x11::xsettitle(self.dpy, self.win, self.netwmname, title);
+    }
+
+    pub fn title(&self) -> Option<String> {
+        return x11::xgettitle(self.dpy, self.win, self.netwmname);
     }
 
     pub fn fd(&self) -> RawFd {

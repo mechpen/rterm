@@ -656,6 +656,31 @@ pub fn xsettitle(dpy: Display, win: Window, netwmname: Atom, title: &str) {
     }
 }
 
+pub fn xgettitle(dpy: Display, win: Window, netwmname: Atom) -> Option<String> {
+    unsafe {
+        let mut prop: XTextProperty = mem::zeroed();
+        let prop_ptr = &mut prop as *mut XTextProperty;
+        if xlib::XGetTextProperty(dpy, win, prop_ptr, netwmname) != xlib::Success.into() {
+            if xlib::XGetWMName(dpy, win, prop_ptr) == 0 {
+                return None;
+            }
+        }
+        let mut count: i32 = 0;
+        let mut list: *mut *mut c_char = std::ptr::null_mut();
+        if xlib::Xutf8TextPropertyToTextList(dpy, prop_ptr, &mut list, &mut count)
+            != xlib::Success.into()
+        {
+            return None;
+        }
+        if count < 1 {
+            return None;
+        }
+        let title = CStr::from_ptr(*list).to_str().unwrap().to_string();
+        xlib::XFreeStringList(list);
+        return Some(title);
+    }
+}
+
 fn sixd_to_16bit(x: u16) -> u16 {
     if x == 0 {
         0

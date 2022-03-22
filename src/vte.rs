@@ -792,6 +792,20 @@ impl<'a> Perform for Performer<'a> {
                     }
                 }
             }
+            // DECSLPP
+            ('t', None) => match arg0_or(0) {
+                22 => {
+                    if let Some(title) = self.win.title() {
+                        self.term.push_title(title);
+                    }
+                }
+                23 => {
+                    if let Some(title) = self.term.pop_title() {
+                        self.win.settitle(&title);
+                    }
+                }
+                _ => (),
+            },
             // DECSCUSR -- Set Cursor Style
             ('q', Some(b' ')) => {
                 if let Some(arg0) = arg0 {
