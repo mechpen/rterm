@@ -7,7 +7,7 @@ use crate::glyph::{blank_glyph, Glyph, GlyphAttr, GlyphProp};
 use crate::point::Point;
 use crate::snap::{is_delim, SnapMode};
 use crate::utils::{is_between, limit, sort_pair};
-use crate::Result;
+use anyhow::Result;
 use bitflags::bitflags;
 use std::cmp;
 use unicode_width::UnicodeWidthChar;

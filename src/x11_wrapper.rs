@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use crate::color::COLOR_NAMES;
-use crate::{Error, Result};
+use anyhow::{anyhow, Result};
 use fontconfig::fontconfig as fc;
 use std::convert::TryInto;
 use std::ffi::CStr;
@@ -130,7 +130,7 @@ pub fn cast_event<T>(event: &XEvent) -> &T {
 pub fn XOpenDisplay() -> Result<Display> {
     let dpy = unsafe { xlib::XOpenDisplay(null()) };
     if dpy.is_null() {
-        return Err("can't open display".into());
+        return Err(anyhow!("can't open display"));
     }
     Ok(dpy)
 }
@@ -449,7 +449,7 @@ pub fn XftNameParse(name: &str) -> Result<FcPattern> {
     let name = CString::new(name).unwrap();
     let pattern = unsafe { xft::XftNameParse(name.as_ptr() as *const _) };
     if pattern.is_null() {
-        return Err("can't parse font name".into());
+        return Err(anyhow!("can't parse font name"));
     }
     Ok(pattern)
 }
@@ -458,7 +458,7 @@ pub fn XftFontMatch(dpy: Display, scr: c_int, pattern: FcPattern) -> Result<FcPa
     let mut result = xft::FcResult::NoMatch;
     let pattern = unsafe { xft::XftFontMatch(dpy, scr, pattern, &mut result) };
     if pattern.is_null() {
-        return Err("can't match font".into());
+        return Err(anyhow!("can't match font"));
     }
     Ok(pattern)
 }
@@ -466,7 +466,7 @@ pub fn XftFontMatch(dpy: Display, scr: c_int, pattern: FcPattern) -> Result<FcPa
 pub fn XftFontOpenPattern(dpy: Display, pattern: FcPattern) -> Result<XftFont> {
     let font = unsafe { xft::XftFontOpenPattern(dpy, pattern) };
     if font.is_null() {
-        return Err("can't load font".into());
+        return Err(anyhow!("can't load font"));
     }
     Ok(font)
 }
@@ -491,9 +491,7 @@ pub fn XftColorAllocName(
         if xft::XftColorAllocName(dpy, vis, cmap, name.as_ptr(), col.as_mut_ptr()) == 1 {
             Ok(col.assume_init())
         } else {
-            Err(Error {
-                msg: format!("Invalid color name: {}", name_in),
-            })
+            Err(anyhow!(format!("Invalid color name: {}", name_in)))
         }
     }
 }
@@ -523,9 +521,7 @@ pub fn XftColorAllocValue(
         if xft::XftColorAllocValue(dpy, vis, cmap, renderColor, col.as_mut_ptr()) == 1 {
             Ok(col.assume_init())
         } else {
-            Err(Error {
-                msg: "Invalid color value".to_string(),
-            })
+            Err(anyhow!("Invalid color value"))
         }
     }
 }
@@ -701,8 +697,6 @@ pub fn xloadcolor(
     } else if let Some(col) = COLOR_NAMES.get(idx as usize) {
         XftColorAllocName(dpy, vis, cmap, col)
     } else {
-        Err(Error {
-            msg: "Invalid index/name in xloadcolor call!".into(),
-        })
+        Err(anyhow!("Invalid index/name in xloadcolor call!"))
     }
 }

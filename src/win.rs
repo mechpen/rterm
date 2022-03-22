@@ -13,7 +13,7 @@ use crate::snap::Snap;
 use crate::term::Term;
 use crate::utils::term_decode;
 use crate::x11_wrapper as x11;
-use crate::{Error, Result};
+use anyhow::{anyhow, Result};
 use bitflags::bitflags;
 use std::os::raw::*;
 use std::os::unix::io::RawFd;
@@ -248,21 +248,17 @@ impl Win {
                 col.color.red, col.color.green, col.color.blue
             ))
         } else {
-            Err(Error {
-                msg: "Color index to large.".into(),
-            })
+            Err(anyhow!("Color index to large."))
         }
     }
 
     pub fn setcolor(&mut self, idx: u16, name: Option<&str>) -> Result<()> {
         if idx as usize >= self.colors.len() {
-            return Err(Error {
-                msg: format!(
-                    "setcolor: color index {} to large, max {}",
-                    idx,
-                    self.colors.len()
-                ),
-            });
+            return Err(anyhow!(format!(
+                "setcolor: color index {} to large, max {}",
+                idx,
+                self.colors.len()
+            )));
         }
         let color = x11::xloadcolor(self.dpy, self.vis, self.cmap, idx, name)?;
         self.colors.push(color);

@@ -3,7 +3,7 @@ use crate::term::Term;
 use crate::utils::parse_geometry;
 use crate::vte::Vte;
 use crate::win::Win;
-use crate::Result;
+use anyhow::Result;
 use nix;
 use nix::errno::Errno;
 use nix::sys::select::{select, FdSet};

@@ -1,7 +1,7 @@
 extern crate rterm;
 
+use anyhow::{anyhow, Result};
 use rterm::app::App;
-use rterm::Result;
 use std::env;
 
 fn usage() {
@@ -42,7 +42,7 @@ fn _main() -> Result<()> {
         }
         if arg.starts_with('-') {
             usage();
-            return Err("invalid option".into());
+            return Err(anyhow!("invalid option"));
         }
     }
 
@@ -56,7 +56,7 @@ fn main() {
     let ret = match _main() {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("{}", e.msg);
+            eprintln!("{}", e);
             -1
         }
     };
