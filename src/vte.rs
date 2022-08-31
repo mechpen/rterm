@@ -12,6 +12,7 @@ use vte::{Params, ParamsIter, Parser, Perform};
 
 const NAME: &str = env!("CARGO_PKG_NAME");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const VTIDEN: &[u8] = b"\x1B[?6c";
 
 pub struct Vte {
     parser: Parser,
@@ -26,15 +27,15 @@ impl Vte {
         }
     }
 
-    pub fn process_input(&mut self, buf: &[u8], win: &mut Win, term: &mut Term, pty: &mut Pty) {
+    pub fn process_input(
+	&mut self, buf: &[u8], win: &mut Win, term: &mut Term, pty: &mut Pty
+    ) {
         let mut performer = Performer::new(win, term, pty, self.last_c.take());
         buf.iter()
             .for_each(|&b| self.parser.advance(&mut performer, b));
         self.last_c = performer.last_c.take();
     }
 }
-
-const VTIDEN: &[u8] = b"\x1B[?6c";
 
 struct Performer<'a> {
     win: &'a mut Win,
@@ -313,38 +314,32 @@ impl<'a> Perform for Performer<'a> {
         let term = &mut *self.term;
 
         match byte {
-            0x07 =>
-            // BEL
+            0x07 => // BEL
             {
                 win.bell()
             }
-            0x08 =>
-            // BS
+            0x08 => // BS
             {
+		println!("BS");
                 term.move_to(term.c.x.saturating_sub(1), term.c.y)
             }
-            0x09 =>
-            // HT
+            0x09 => // HT
             {
                 term.put_tabs(1)
             }
-            0x0D =>
-            // CR
+            0x0D => // CR
             {
                 term.move_to(0, term.c.y)
             }
-            0x0A | 0x0B | 0x0C =>
-            // LF VT FF
+            0x0A | 0x0B | 0x0C => // LF VT FF
             {
                 term.new_line(false)
             }
-            0x0E =>
-            // SO
+            0x0E => // SO
             {
                 term.charset.set_current(CharsetIndex::G1)
             }
-            0x0F =>
-            // SI
+            0x0F => // SI
             {
                 term.charset.set_current(CharsetIndex::G0)
             }
@@ -358,27 +353,21 @@ impl<'a> Perform for Performer<'a> {
         let intermediate = intermediates.get(0);
 
         match (byte, intermediate) {
-            (b'B', Some(b'(')) => term.charset.setup(CharsetIndex::G0, Charset::Ascii),
-            (b'B', Some(b')')) => term.charset.setup(CharsetIndex::G1, Charset::Ascii),
-            (b'B', Some(b'*')) => term.charset.setup(CharsetIndex::G2, Charset::Ascii),
-            (b'B', Some(b'+')) => term.charset.setup(CharsetIndex::G3, Charset::Ascii),
-            (b'D', None) =>
-            // IND -- Linefeed
-            {
-                term.new_line(false)
-            }
-            (b'E', None) =>
-            // NEL -- Next line
-            {
-                term.new_line(true)
-            }
-            (b'H', None) =>
-            // HTS -- Horizontal tab stop
-            {
-                term.set_tab(term.c.x)
-            }
-            (b'M', None) =>
-            // RI -- Reverse index
+            (b'B', Some(b'(')) =>
+		term.charset.setup(CharsetIndex::G0, Charset::Ascii),
+            (b'B', Some(b')')) =>
+		term.charset.setup(CharsetIndex::G1, Charset::Ascii),
+            (b'B', Some(b'*')) =>
+		term.charset.setup(CharsetIndex::G2, Charset::Ascii),
+            (b'B', Some(b'+')) =>
+		term.charset.setup(CharsetIndex::G3, Charset::Ascii),
+            (b'D', None) => // IND -- Linefeed
+                term.new_line(false),
+            (b'E', None) => // NEL -- Next line
+                term.new_line(true),
+            (b'H', None) => // HTS -- Horizontal tab stop
+                term.set_tab(term.c.x),
+            (b'M', None) => // RI -- Reverse index
             {
                 if term.c.y == term.scroll_top {
                     term.scroll_down(term.scroll_top, 1);
@@ -386,44 +375,31 @@ impl<'a> Perform for Performer<'a> {
                     term.move_to(term.c.x, term.c.y - 1);
                 }
             }
-            (b'Z', None) =>
-            // DECID -- Identify Terminal
-            {
-                self.pty.write(VTIDEN)
-            }
-            (b'c', None) =>
-            // RIS -- Reset to initial state
+            (b'Z', None) => // DECID -- Identify Terminal
+                self.pty.write(VTIDEN),
+            (b'c', None) => // RIS -- Reset to initial state
             {
                 win.reset_colors();
                 // reset title...
                 term.reset()
             } // FIXME: reset title and etc.
-            (b'0', Some(b'(')) => term.charset.setup(CharsetIndex::G0, Charset::Graphic0),
-            (b'0', Some(b')')) => term.charset.setup(CharsetIndex::G1, Charset::Graphic0),
-            (b'0', Some(b'*')) => term.charset.setup(CharsetIndex::G2, Charset::Graphic0),
-            (b'0', Some(b'+')) => term.charset.setup(CharsetIndex::G3, Charset::Graphic0),
-            (b'7', None) =>
-            // DECSC -- Save Cursor
-            {
-                term.save_cursor()
-            }
-            (b'8', None) =>
-            // DECRC -- Restore Cursor
-            {
-                term.load_cursor()
-            }
-            (b'=', None) =>
-            // DECPAM -- Application keypad
-            {
-                win.set_mode(WinMode::APPKEYPAD, true)
-            }
-            (b'>', None) =>
-            // DECPNM -- Normal keypad
-            {
-                win.set_mode(WinMode::APPKEYPAD, false)
-            }
-            (b'\\', None) =>
-                // ST -- String Terminator
+            (b'0', Some(b'(')) =>
+		term.charset.setup(CharsetIndex::G0, Charset::Graphic0),
+            (b'0', Some(b')')) =>
+		term.charset.setup(CharsetIndex::G1, Charset::Graphic0),
+            (b'0', Some(b'*')) =>
+		term.charset.setup(CharsetIndex::G2, Charset::Graphic0),
+            (b'0', Some(b'+')) =>
+		term.charset.setup(CharsetIndex::G3, Charset::Graphic0),
+            (b'7', None) => // DECSC -- Save Cursor
+                term.save_cursor(),
+            (b'8', None) => // DECRC -- Restore Cursor
+                term.load_cursor(),
+            (b'=', None) => // DECPAM -- Application keypad
+                win.set_mode(WinMode::APPKEYPAD, true),
+            (b'>', None) => // DECPNM -- Normal keypad
+                win.set_mode(WinMode::APPKEYPAD, false),
+            (b'\\', None) => // ST -- String Terminator
                 {}
             _ => println!("unknown esc {:?} {}", intermediate, byte as char),
         }

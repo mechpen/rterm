@@ -1,6 +1,6 @@
 use crate::pty::Pty;
 use crate::term::Term;
-use crate::utils::parse_geometry;
+use crate::utils::{parse_geometry, epoch_ms};
 use crate::vte::Vte;
 use crate::win::Win;
 use crate::Result;
@@ -12,17 +12,12 @@ use nix::sys::time::{TimeVal, TimeValLike};
 use std::fs::File;
 use std::io::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, SystemTime};
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
-/*
- * draw latency range in ms - from new content/keypress/etc until drawing.
- * within this range, st draws when content stops arriving (idle). mostly it's
- * near minlatency, but it waits longer for slow updates to avoid partial draw.
- * low minlatency will tear/flicker more, as it can "detect" idle too early.
- */
-const MINLATENCY: f64 = 8.0;
-const MAXLATENCY: f64 = 33.0;
+
+const MIN_DRAW_DELAY_MS: i64 = 5;
+const MAX_DRAW_DELAY_MS: i64 = 50;
+const BLINK_PERIOD_MS: i64 = 5000000000;
 
 fn is_running() -> bool {
     RUNNING.load(Ordering::Relaxed)
@@ -42,6 +37,11 @@ fn set_sigchld() {
     }
 }
 
+// FIXME: move to win
+fn next_blink_timeout() -> i64 {
+    BLINK_PERIOD_MS - epoch_ms() % BLINK_PERIOD_MS
+}
+
 // Data flow:
 //
 //   read pty fd --> vte parse --+--> write to pty fd
@@ -53,13 +53,15 @@ fn set_sigchld() {
 pub struct App {
     term: Term,
     win: Win,
-    vte: Vte,
     pty: Pty,
+    vte: Vte,
     log: Option<File>,
 }
 
 impl App {
-    pub fn new(geometry: Option<&str>, font: Option<&str>, log: Option<&str>) -> Result<Self> {
+    pub fn new(
+        geometry: Option<&str>, font: Option<&str>, log: Option<&str>
+    ) -> Result<Self> {
         let log = match log {
             Some(x) => Some(File::create(x)?),
             None => None,
@@ -72,13 +74,11 @@ impl App {
         set_sigchld();
 
         let term = Term::new(cols, rows)?;
-        let mut pty = Pty::new()?;
-        pty.resize(cols, rows)?;
         Ok(App {
             win: Win::new(term.cols, term.rows, xoff, yoff, font)?,
-            term,
+            pty: Pty::new(term.cols, term.rows)?,
             vte: Vte::new(),
-            pty,
+            term,
             log,
         })
     }
@@ -87,15 +87,10 @@ impl App {
         let win_fd = self.win.fd();
         let pty_fd = self.pty.fd();
         let mut buf = [0; 8192];
-        let mut last_blink = SystemTime::now();
-        let blink_duration = Duration::from_millis(500);
-        let mut drawing = false;
-        let mut trigger = SystemTime::now();
-        let mut now;
-        let mut timeout_idle: f64 = -1.0;
+        let mut delay_start = 0;
+        let mut timeout = TimeVal::milliseconds(next_blink_timeout());
 
         while is_running() {
-            let blink_elapsed = last_blink.elapsed().map_or_else(|_| blink_duration, |e| e);
             let mut rfds = FdSet::new();
             rfds.insert(pty_fd);
             rfds.insert(win_fd);
@@ -105,71 +100,57 @@ impl App {
                 wfds.insert(pty_fd);
             }
 
-            // Something pending so let select just return otherwise events
-            // might be delayed.
-            let mut timeout_in = if self.win.is_pending() {
-                TimeVal::milliseconds(0)
-            } else if timeout_idle > 0.0 {
-                TimeVal::nanoseconds((timeout_idle * 1e6) as i64)
-            } else {
-                TimeVal::milliseconds(blink_duration.as_millis() as i64)
-            };
-            let timeout = Some(&mut timeout_in);
-            match select(None, Some(&mut rfds), Some(&mut wfds), None, timeout) {
+            if self.win.pending() {
+                timeout = TimeVal::milliseconds(0);
+            }
+
+            match select(
+                None, Some(&mut rfds), Some(&mut wfds), None, Some(&mut timeout)
+            ) {
                 Ok(_) => (),
                 Err(Errno::EINTR) => continue,
                 Err(err) => return Err(err.into()),
             }
-            now = SystemTime::now();
 
             if wfds.contains(pty_fd) {
                 self.pty.flush()?;
             }
 
+            // FIXME: may remove
             self.win.undraw_cursor(&self.term);
 
-            // Let pending do it's thing so always try to process events.
-            let mut check_idle = self.win.process_input(&mut self.term, &mut self.pty);
-
             if rfds.contains(pty_fd) {
-                check_idle = true;
                 let n = self.pty.read(&mut buf)?;
                 self.log_pty(&buf[..n])?;
-                self.vte
-                    .process_input(&buf[..n], &mut self.win, &mut self.term, &mut self.pty);
+                self.vte.process_input(
+                    &buf[..n], &mut self.win, &mut self.term, &mut self.pty
+                );
             }
-            if blink_elapsed >= blink_duration {
-                self.win.toggle_blink();
-                last_blink = SystemTime::now();
-            }
-            /*
-             * To reduce flicker and tearing, when new content or event
-             * triggers drawing, we first wait a bit to ensure we got
-             * everything, and if nothing new arrives - we draw.
-             * We start with trying to wait minlatency ms. If more content
-             * arrives sooner, we retry with shorter and shorter periods,
-             * and eventually draw even without idle after maxlatency ms.
-             * Typically this results in low latency while interacting,
-             * maximum latency intervals during `cat huge.txt`, and perfect
-             * sync with periodic updates from animations/key-repeats/etc.
-             */
-            if check_idle {
-                if !drawing {
-                    trigger = now;
-                    drawing = true;
+
+            let count = self.win.process_input(&mut self.term, &mut self.pty);
+
+            // To reduce flicker and tearing, when new content or event
+            // triggers drawing, we first wait a bit to ensure we got
+            // everything, and if nothing new arrives - we draw.
+            // Typically this results in low latency while interacting,
+            // maximum latency intervals during `cat huge.txt`, and perfect
+            // sync with periodic updates from animations/key-repeats/etc.
+            //
+            // The equation here is simplified from the equation in st.
+            if rfds.contains(pty_fd) || count > 0 {
+                let now = epoch_ms();
+                if delay_start == 0 {
+                    delay_start = now;
                 }
-                if let Ok(tdiff) = now.duration_since(trigger) {
-                    timeout_idle =
-                        ((MAXLATENCY - tdiff.as_millis() as f64) / MAXLATENCY) * MINLATENCY;
-                    //println!("XXXX idle: {}", timeout_idle);
-                    if timeout_idle > 0.0 {
-                        continue; /* we have time, try to find idle */
-                    }
+                if now - delay_start < MAX_DRAW_DELAY_MS {
+                    timeout = TimeVal::milliseconds(MIN_DRAW_DELAY_MS);
+                    continue
                 }
             }
-            timeout_idle = -1.0;
+
             self.win.draw(&mut self.term);
-            drawing = false;
+            timeout = TimeVal::milliseconds(next_blink_timeout());
+            delay_start = 0;
         }
 
         Ok(())

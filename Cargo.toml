@@ -1,19 +1,19 @@
 [package]
 name = "rterm"
 version = "0.0.6"
-edition = "2018"
+edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "A port of suckless terminal to rust."
 repository = "https://github.com/mechpen/rterm"
 keywords = ["st", "terminal"]
 
 [dependencies]
-x11 = "2"
-nix = "0.22"
-vte = "0.10"
-bitflags = "1.2"
-unicode-width = "0.1"
-servo-fontconfig = "0.5"
+x11 = ">=2"
+nix = ">=0.22"
+vte = ">=0.10"
+bitflags = ">=1.2"
+unicode-width = ">=0.1"
+servo-fontconfig = ">=0.5"
 
 [[bin]]
 name = "rterm"

@@ -19,11 +19,17 @@ pub struct Pty {
 }
 
 impl Pty {
-    pub fn new() -> Result<Self> {
+    pub fn new(cols: usize, rows: usize) -> Result<Self> {
+        let ws = libc::winsize {
+            ws_row: u16::try_from(rows).unwrap(),
+            ws_col: u16::try_from(cols).unwrap(),
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
         let ForkptyResult {
             master,
             fork_result,
-        } = unsafe { forkpty(None, None)? };
+        } = unsafe { forkpty(Some(&ws), None)? };
         let child = match fork_result {
             ForkResult::Parent { child } => child,
             ForkResult::Child => {
@@ -40,11 +46,9 @@ impl Pty {
     }
 
     pub fn resize(&mut self, cols: usize, rows: usize) -> Result<()> {
-        let cols = u16::try_from(cols).unwrap();
-        let rows = u16::try_from(rows).unwrap();
         let ws = libc::winsize {
-            ws_row: rows,
-            ws_col: cols,
+            ws_row: u16::try_from(rows).unwrap(),
+            ws_col: u16::try_from(cols).unwrap(),
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
@@ -71,22 +75,17 @@ impl Pty {
     }
 
     pub fn flush(&mut self) -> Result<()> {
-        let mut n = write(self.master_fd, self.write_buf.make_contiguous())?;
-        if n == self.write_buf.len() {
-            self.write_buf.clear();
-        } else {
-            while n > 0 {
-                self.write_buf.pop_front();
-                n -= 1;
-            }
+        let (first, second) = self.write_buf.as_slices();
+        let mut n = write(self.master_fd, first)?;
+        if n == first.len() {
+            n += write(self.master_fd, second)?;
         }
+        self.write_buf.drain(..n);
         Ok(())
     }
 
     pub fn write(&mut self, buf: &[u8]) {
-        for b in buf {
-            self.write_buf.push_back(*b);
-        }
+        self.write_buf.extend(buf);
     }
 }
 

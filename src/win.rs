@@ -40,7 +40,9 @@ bitflags! {
     }
 }
 
-// FIXME, this can only be 0 until impemented everywhere.
+// FIXME: this can only be 0 until impemented everywhere.
+// FIXME: auto fix size
+// FIXME: display geometry
 const BORDERPX: usize = 0;
 
 // thickness of underline and bar cursors
@@ -411,19 +413,18 @@ impl Win {
         self.draw(term);
     }
 
-    pub fn is_pending(&self) -> bool {
+    pub fn pending(&self) -> bool {
         x11::XPending(self.dpy) > 0
     }
 
-    pub fn process_input(&mut self, term: &mut Term, pty: &mut Pty) -> bool {
-        let mut res = false;
+    pub fn process_input(&mut self, term: &mut Term, pty: &mut Pty) -> u32 {
+        let mut count = 0;
         while x11::XPending(self.dpy) > 0 {
             let mut xev = x11::XNextEvent(self.dpy);
             if x11::XFilterEvent(&mut xev, self.win) == x11::True {
                 continue;
             }
-            res = true;
-
+            count += 1;
             let xev_type = x11::event_type(&xev);
             match xev_type {
                 x11::EXPOSE => (),
@@ -441,7 +442,7 @@ impl Win {
                 _ => println!("event type {:?}", xev_type),
             }
         }
-        res
+        count
     }
 
     fn mouse_report(&mut self, xev: &x11::XButtonEvent, term: &mut Term, pty: &mut Pty) {

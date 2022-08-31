@@ -1,5 +1,6 @@
 use crate::Result;
 use std::cmp;
+use std::time::SystemTime;
 
 #[inline]
 pub fn is_between<T: PartialOrd>(x: T, a: T, b: T) -> bool {
@@ -33,6 +34,14 @@ pub fn is_control_c1(b: u8) -> bool {
 #[inline]
 pub fn is_control(b: u8) -> bool {
     is_control_c0(b) || is_control_c1(b)
+}
+
+#[inline]
+pub fn epoch_ms() -> i64 {
+    SystemTime::now()
+	.duration_since(SystemTime::UNIX_EPOCH)
+	.unwrap()
+	.as_millis() as i64
 }
 
 pub fn term_decode(buf: &[u8]) -> String {

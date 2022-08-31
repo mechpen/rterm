@@ -44,14 +44,14 @@ bitflags! {
     }
 }
 
-pub const COLS_MIN: usize = 2;
-pub const COLS_MAX: usize = u16::MAX as usize;
-pub const ROWS_MIN: usize = 1;
-pub const ROWS_MAX: usize = u16::MAX as usize;
+const COLS_MIN: usize = 2;
+const COLS_MAX: usize = u16::MAX as usize;
+const ROWS_MIN: usize = 1;
+const ROWS_MAX: usize = u16::MAX as usize;
 const TAB_STOP: usize = 8;
 
-/// Term row is basically an iterator but can not implement Iterator without
-/// a lot of allocations so we have this.
+// Term row is basically an iterator but can not implement Iterator without
+// a lot of allocations so we have this.
 pub struct TermRow<'row> {
     row: &'row [Glyph],
     pos: usize,
@@ -71,10 +71,10 @@ impl<'row> TermRow<'row> {
         }
     }
 
-    /// Get next glyph and properties from a row.
-    /// glyph will contain the chars making up the glyph (grapheme cluster- usually
-    /// just one but maybe more).  Returns the current row number (0 based) and the
-    /// glyph properties for the glyph or None if the row has been traversed.
+    // Get next glyph and properties from a row.
+    // glyph will contain the chars making up the glyph (grapheme cluster- usually
+    // just one but maybe more).  Returns the current row number (0 based) and the
+    // glyph properties for the glyph or None if the row has been traversed.
     pub fn next(&mut self, glyph: &mut Vec<char>) -> Option<(usize, GlyphProp)> {
         if self.dummies > 0 {
             self.dummies -= 1;
@@ -114,9 +114,9 @@ impl<'row> TermRow<'row> {
         Some((x, prop))
     }
 
-    /// Return the glyph and properties for column x of the row.  Returns None of
-    /// the column is too large or if the TermRow has already advanced past x.
-    /// This advances the TermRow.
+    // Return the glyph and properties for column x of the row.  Returns None of
+    // the column is too large or if the TermRow has already advanced past x.
+    // This advances the TermRow.
     pub fn column(&mut self, x: usize, glyph: &mut Vec<char>) -> Option<GlyphProp> {
         while let Some((cx, prop)) = self.next(glyph) {
             if x == cx {
@@ -493,15 +493,15 @@ impl Term {
         Self::adjust_x_line(&self.lines()[row], x)
     }
 
-    /// Has a width been set for the glyph at (x, y)?
+    // Has a width been set for the glyph at (x, y)?
     pub fn _has_width(&self, x: usize, y: usize) -> bool {
         let x = self.adjust_x(y, x);
         let attr = self.lines()[y][x].prop.attr;
         attr.contains(GlyphAttr::WIDE) | attr.contains(GlyphAttr::SINGLE)
     }
 
-    /// Sets the width of the char at (x, y) to width.  This is intended to be
-    /// called from the rendering code when the actual glyph size is known.
+    // Sets the width of the char at (x, y) to width.  This is intended to be
+    // called from the rendering code when the actual glyph size is known.
     pub fn _set_width(&mut self, x: usize, y: usize, width: usize) {
         if width == 0 {
             return;
