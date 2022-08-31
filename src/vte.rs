@@ -320,7 +320,6 @@ impl<'a> Perform for Performer<'a> {
             }
             0x08 => // BS
             {
-		println!("BS");
                 term.move_to(term.c.x.saturating_sub(1), term.c.y)
             }
             0x09 => // HT

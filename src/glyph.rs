@@ -25,12 +25,6 @@ bitflags! {
         const WIDE       = 1 << 9;
         // dummy for wide chars
         const DUMMY      = 1 << 10;
-        // Indicates a single column glyph, exists so the render code can detemine
-        // if a width has been set (if neither this or WIDE is set then the glyph
-        // has not been sized).
-        const SINGLE     = 1 << 11;
-        // for codepoints that are part of a grapheme cluster (past the first).
-        const CLUSTER    = 1 << 12;
     }
 }
 

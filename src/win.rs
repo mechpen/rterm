@@ -54,9 +54,6 @@ pub struct Win {
     visible: bool,
     mode: WinMode,
     cursor_vis: bool,
-    // Buffer to store glyph codepoints (for grapheme clusters).
-    // Keep it here to avoid a ton of allocations later.
-    glyph_buf: Vec<char>,
 
     dpy: x11::Display,
     win: x11::Window,
@@ -198,7 +195,6 @@ impl Win {
             visible: true,
             mode: WinMode::empty(),
             cursor_vis: true,
-            glyph_buf: Vec::new(),
 
             sel_type,
             sel_snap: Snap::new(),
@@ -335,8 +331,8 @@ impl Win {
 
     pub fn undraw_cursor(&mut self, term: &Term) {
         let (x, y) = (term.c.x, term.c.y);
-        let g = term.get_glyph(x, y, &mut self.glyph_buf);
-        self.draw_cells(&self.glyph_buf, g, x * self.cw, y * self.ch);
+        let g = term.get_glyph(x, y);
+        self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
     }
 
     pub fn toggle_blink(&mut self) {
@@ -367,8 +363,8 @@ impl Win {
             let (x, y) = (term.c.x, term.c.y);
             match term.c.mode {
                 CursorMode::Block => {
-                    let g = term.get_glyph_at_cursor(&mut self.glyph_buf);
-                    self.draw_cells(&self.glyph_buf, g, x * self.cw, y * self.ch);
+                    let g = term.get_glyph_at_cursor();
+                    self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
                 }
                 CursorMode::Underline => {
                     let drawcol = if term.is_selected(x, y) {
@@ -820,30 +816,23 @@ impl Win {
     }
 
     fn draw_line(&mut self, term: &mut Term, y: usize) {
-        let mut compound_glyph;
         let yp = y * self.ch;
         let mut x0 = 0;
-        let mut row = term.get_row(y);
-        let mut g0 = row
-            .next(&mut self.glyph_buf)
-            .map_or_else(|| GlyphProp::new(0, 0, GlyphAttr::empty()), |(_, r)| r)
-            .resolve(term.is_selected(0, y));
-        let mut cs = Vec::with_capacity(term.cols);
-        compound_glyph = self.glyph_buf.len() > 1;
-        cs.append(&mut self.glyph_buf);
+        let mut g0 = term.get_glyph(x0, y);
+        let mut cs = vec![g0.c];
 
-        while let Some((x, g)) = row.next(&mut self.glyph_buf) {
-            let g = g.resolve(term.is_selected(x, y));
-            if g0 != g || compound_glyph {
-                self.draw_cells(&cs, g0, x0 * self.cw, yp);
+        for x in x0 + 1..term.cols {
+            let g = term.get_glyph(x, y);
+            if g0.prop == g.prop {
+                cs.push(g.c);
+            } else {
+                self.draw_cells(&cs, g0.prop, x0 * self.cw, yp);
                 x0 = x;
-                g0 = g; //.resolve(term.is_selected(x0, y));
-                cs.clear();
+                g0 = g;
+                cs = vec![g0.c];
             }
-            compound_glyph = self.glyph_buf.len() > 1;
-            cs.append(&mut self.glyph_buf);
         }
-        self.draw_cells(&cs, g0, x0 * self.cw, yp);
+        self.draw_cells(&cs, g0.prop, x0 * self.cw, yp);
     }
 
     fn finish_draw(&self, cols: usize, rows: usize) {
