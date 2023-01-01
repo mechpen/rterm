@@ -27,16 +27,18 @@ bitflags! {
         const HIDE        = 1 << 2;
         const APPCURSOR   = 1 << 3;
         const EIGHT_BIT   = 1 << 4;
-        const BLINK       = 1 << 5;
-        const NUMLOCK     = 1 << 6;
-        const ECHO        = 1 << 7;
-        const MOUSEBTN    = 1 << 8;
-        const MOUSEMOTION = 1 << 9;
-        const MOUSESGR    = 1 << 10;
-        const MOUSEX10    = 1 << 11;
-        const MOUSEMANY   = 1 << 12;
-        const MOUSE       = Self::MOUSEBTN.bits|Self::MOUSEMOTION.bits|Self::MOUSEX10.bits|Self::MOUSEMANY.bits;
-        const FOCUS       = 1 << 13;
+        const NUMLOCK     = 1 << 5;
+        const ECHO        = 1 << 6;
+        const MOUSEBTN    = 1 << 7;
+        const MOUSEMOTION = 1 << 8;
+        const MOUSESGR    = 1 << 9;
+        const MOUSEX10    = 1 << 10;
+        const MOUSEMANY   = 1 << 11;
+        const MOUSE       = (Self::MOUSEBTN.bits |
+	                     Self::MOUSEMOTION.bits |
+			     Self::MOUSEX10.bits |
+			     Self::MOUSEMANY.bits);
+        const FOCUS       = 1 << 12;
     }
 }
 
@@ -50,16 +52,19 @@ const CURSORTHICKNESS: usize = 2;
 
 const FORCEMOUSEMOD: u32 = x11::ShiftMask;
 
-const BLINK_PERIOD_MS: i64 = 1_000;
+const BLINK_PERIOD_MS: i64 = 500;
 
 pub fn next_blink_timeout() -> i64 {
     BLINK_PERIOD_MS - epoch_ms() % BLINK_PERIOD_MS
 }
 
+fn blink_hide() -> bool {
+    (epoch_ms() / BLINK_PERIOD_MS) % 2 == 1
+}
+
 pub struct Win {
     visible: bool,
     mode: WinMode,
-    cursor_vis: bool,
 
     dpy: x11::Display,
     win: x11::Window,
@@ -191,7 +196,6 @@ impl Win {
         Ok(Win {
             visible: true,
             mode: WinMode::empty(),
-            cursor_vis: true,
 
             sel_type,
             sel_snap: Snap::new(),
@@ -338,65 +342,18 @@ impl Win {
         }
 
         for y in 0..term.rows {
-            if !term.dirty[y] {
-                continue;
-            }
-            self.draw_line(term, y);
-            term.dirty[y] = false;
-        }
-
-        if term.c.blink {
-            self.cursor_vis = !self.mode.contains(WinMode::BLINK);
-        } else {
-            self.cursor_vis = true;
-        }
-        if !self.mode.contains(WinMode::HIDE) && self.cursor_vis {
-            let (x, y) = (term.c.x, term.c.y);
-            match term.c.mode {
-                CursorMode::Block => {
-                    let g = term.get_glyph_at_cursor();
-                    self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
-                }
-                CursorMode::Underline => {
-                    let drawcol = if term.is_selected(x, y) {
-                        self.colors[CURSOR_REV_COLOR]
-                    } else {
-                        self.colors[CURSOR_COLOR]
-                    };
-                    x11::XftDrawRect(
-                        self.draw,
-                        &drawcol,
-                        BORDERPX + x * self.cw,
-                        BORDERPX + (y + 1) * self.ch - CURSORTHICKNESS,
-                        self.cw,
-                        CURSORTHICKNESS,
-                    );
-                }
-                CursorMode::Bar => {
-                    let drawcol = if term.is_selected(x, y) {
-                        self.colors[CURSOR_REV_COLOR]
-                    } else {
-                        self.colors[CURSOR_COLOR]
-                    };
-                    x11::XftDrawRect(
-                        self.draw,
-                        &drawcol,
-                        BORDERPX + x * self.cw,
-                        BORDERPX + y * self.ch,
-                        CURSORTHICKNESS,
-                        self.ch,
-                    );
-                }
+	    if term.is_line_dirty(y) {
+		self.draw_line(term, y);
             }
         }
+	term.set_dirty(0..term.rows, false);
 
+	self.draw_cursor(term);
         self.finish_draw(term.cols, term.rows);
     }
 
     pub fn redraw(&mut self, term: &mut Term) {
-        for y in 0..term.rows {
-            term.dirty[y] = true;
-        }
+	term.set_dirty(0..term.rows, true);
         self.draw(term);
     }
 
@@ -431,6 +388,50 @@ impl Win {
             }
         }
         count
+    }
+
+    fn draw_cursor(&mut self, term: &mut Term) {
+        if self.mode.contains(WinMode::HIDE) || (term.c.blink && blink_hide()) {
+	    return;
+	}
+
+        let (x, y) = (term.c.x, term.c.y);
+        match term.c.mode {
+            CursorMode::Block => {
+                let g = term.get_glyph_at_cursor();
+                self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
+            }
+            CursorMode::Underline => {
+                let drawcol = if term.is_selected(x, y) {
+                    self.colors[CURSOR_REV_COLOR]
+                } else {
+                    self.colors[CURSOR_COLOR]
+                };
+                x11::XftDrawRect(
+                    self.draw,
+                    &drawcol,
+                    BORDERPX + x * self.cw,
+                    BORDERPX + (y + 1) * self.ch - CURSORTHICKNESS,
+                    self.cw,
+                    CURSORTHICKNESS,
+                );
+            }
+            CursorMode::Bar => {
+                let drawcol = if term.is_selected(x, y) {
+                    self.colors[CURSOR_REV_COLOR]
+                } else {
+                    self.colors[CURSOR_COLOR]
+                };
+                x11::XftDrawRect(
+                    self.draw,
+                    &drawcol,
+                    BORDERPX + x * self.cw,
+                    BORDERPX + y * self.ch,
+                    CURSORTHICKNESS,
+                    self.ch,
+                );
+            }
+        }
     }
 
     fn mouse_report(&mut self, xev: &x11::XButtonEvent, term: &mut Term, pty: &mut Pty) {
@@ -782,11 +783,9 @@ impl Win {
                 println!("Failed to alloc truecolor for FAINT")
             }
         }
-        if attr.contains(GlyphAttr::INVISIBLE) {
-            fg = bg;
-        }
-        if attr.contains(GlyphAttr::BLINK) && self.mode.contains(WinMode::BLINK) {
-            fg = bg;
+        if attr.contains(GlyphAttr::INVISIBLE) ||
+	    (attr.contains(GlyphAttr::BLINK) && blink_hide()) {
+	    fg = bg;
         }
 
         x11::XftDrawRect(self.draw, &bg, xp, yp, width, self.ch);

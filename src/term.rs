@@ -54,15 +54,15 @@ pub struct Term {
     pub rows: usize,
     pub cols: usize,
     pub c: Cursor,
-    pub dirty: Vec<bool>,
     pub scroll_top: usize,
     pub scroll_bot: usize,
     pub charset: CharsetTable,
     pub prop: GlyphProp,
     saved_c: Option<Cursor>,
-    saved_alt_c: Option<Cursor>,
+    alt_saved_c: Option<Cursor>,
     lines: Vec<Vec<Glyph>>,
     alt_lines: Vec<Vec<Glyph>>,
+    dirty: Vec<bool>,
     tabs: Vec<bool>,
     mode: TermMode,
     sel: Selection,
@@ -85,7 +85,7 @@ impl Term {
             tabs: Vec::new(),
             sel: Selection::new(),
             saved_c: None,
-            saved_alt_c: None,
+            alt_saved_c: None,
         };
 
         term.resize(cols, rows);
@@ -191,10 +191,24 @@ impl Term {
         self.scroll_bot = bot;
     }
 
-    fn set_dirty<R: Iterator<Item = usize>>(&mut self, range: R) {
+    pub fn set_dirty<R: Iterator<Item = usize>>(&mut self, range: R, v: bool) {
         for i in range {
-            self.dirty[i] = true;
+            self.dirty[i] = v;
         }
+    }
+
+    pub fn is_line_dirty(&self, i: usize) -> bool {
+	if self.dirty[i] {
+	    return true;
+	}
+
+	for g in self.lines()[i].iter() {
+	    if g.prop.attr.contains(GlyphAttr::BLINK) {
+		return true;
+	    }
+	}
+
+	return false
     }
 
     pub fn clear_region<R1, R2>(&mut self, xrange: R1, yrange: R2)
@@ -240,7 +254,7 @@ impl Term {
         let n = cmp::min(n, bottom - orig + 1);
 
         self.clear_lines(orig..orig + n);
-        self.set_dirty(orig + n..=bottom);
+        self.set_dirty(orig + n..=bottom, true);
         self.lines_mut()[orig..=bottom].rotate_left(n);
 
         self.scroll_selection(orig, -(n as i32));
@@ -254,7 +268,7 @@ impl Term {
         let bottom = self.scroll_bot;
         let n = cmp::min(n, bottom - orig + 1);
 
-        self.set_dirty(orig..bottom - n + 1);
+        self.set_dirty(orig..bottom - n + 1, true);
         self.clear_lines(bottom - n + 1..=self.scroll_bot);
         self.lines_mut()[orig..=bottom].rotate_right(n);
 
@@ -389,21 +403,12 @@ impl Term {
     }
 
     pub fn save_cursor(&mut self) {
-        if self.mode.contains(TermMode::ALTSCREEN) {
-            self.saved_alt_c = Some(self.c);
-        } else {
-            self.saved_c = Some(self.c);
-        }
+        self.saved_c = Some(self.c);
     }
 
     pub fn load_cursor(&mut self) {
-        let saved = if self.mode.contains(TermMode::ALTSCREEN) {
-            self.saved_alt_c
-        } else {
-            self.saved_c
-        };
-        if let Some(saved) = saved {
-            self.c = saved;
+        if let Some(c) = self.saved_c {
+            self.c = c;
             self.move_to(self.c.x, self.c.y);
         }
     }
@@ -460,7 +465,7 @@ impl Term {
 
     pub fn clear_selection(&mut self) {
         self.sel.empty = true;
-        self.set_dirty(self.sel.nb.y..=self.sel.ne.y);
+        self.set_dirty(self.sel.nb.y..=self.sel.ne.y, true);
     }
 
     pub fn get_selection_content(&self) -> Option<String> {
@@ -494,7 +499,8 @@ impl Term {
 
     pub fn swap_screen(&mut self) {
         self.mode ^= TermMode::ALTSCREEN;
-        self.set_dirty(0..self.dirty.len());
+	(self.saved_c, self.alt_saved_c) = (self.alt_saved_c, self.saved_c);
+        self.set_dirty(0..self.rows, true);
     }
 
     fn normalize_selection(&mut self) {
@@ -526,7 +532,7 @@ impl Term {
             }
         }
 
-        self.set_dirty(nb.y..=ne.y);
+        self.set_dirty(nb.y..=ne.y, true);
         self.sel.nb = nb;
         self.sel.ne = ne;
     }
