@@ -110,9 +110,6 @@ impl App {
                 self.pty.flush()?;
             }
 
-            // FIXME: may remove
-            self.win.undraw_cursor(&self.term);
-
             if rfds.contains(pty_fd) {
                 let n = self.pty.read(&mut buf)?;
                 self.log_pty(&buf[..n])?;

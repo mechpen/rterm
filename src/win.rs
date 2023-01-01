@@ -35,9 +35,9 @@ bitflags! {
         const MOUSEX10    = 1 << 10;
         const MOUSEMANY   = 1 << 11;
         const MOUSE       = (Self::MOUSEBTN.bits |
-	                     Self::MOUSEMOTION.bits |
-			     Self::MOUSEX10.bits |
-			     Self::MOUSEMANY.bits);
+                             Self::MOUSEMOTION.bits |
+                             Self::MOUSEX10.bits |
+                             Self::MOUSEMANY.bits);
         const FOCUS       = 1 << 12;
     }
 }
@@ -79,6 +79,8 @@ pub struct Win {
     cw: usize,
     ch: usize,
     ca: usize,
+    cursor_x: usize,
+    cursor_y: usize,
     old_mouse_x: usize,
     old_mouse_y: usize,
     old_mouse_button: u32,
@@ -215,6 +217,8 @@ impl Win {
             cw,
             ch,
             ca,
+            cursor_x: 0,
+            cursor_y: 0,
             old_mouse_x: 0,
             old_mouse_y: 0,
             old_mouse_button: 0,
@@ -330,30 +334,24 @@ impl Win {
         self.mode.set(mode, val);
     }
 
-    pub fn undraw_cursor(&mut self, term: &Term) {
-        let (x, y) = (term.c.x, term.c.y);
-        let g = term.get_glyph(x, y);
-        self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
-    }
-
     pub fn draw(&mut self, term: &mut Term) {
         if !self.visible {
             return;
         }
 
         for y in 0..term.rows {
-	    if term.is_line_dirty(y) {
-		self.draw_line(term, y);
+            if term.is_line_dirty(y) {
+                self.draw_line(term, y);
             }
         }
-	term.set_dirty(0..term.rows, false);
+        term.set_dirty(0..term.rows, false);
 
-	self.draw_cursor(term);
+        self.draw_cursor(term);
         self.finish_draw(term.cols, term.rows);
     }
 
     pub fn redraw(&mut self, term: &mut Term) {
-	term.set_dirty(0..term.rows, true);
+        term.set_dirty(0..term.rows, true);
         self.draw(term);
     }
 
@@ -390,12 +388,21 @@ impl Win {
         count
     }
 
-    fn draw_cursor(&mut self, term: &mut Term) {
+    fn undraw_cursor(&mut self, term: &Term) {
+        let (x, y) = (self.cursor_x, self.cursor_y);
+        let g = term.get_glyph(x, y);
+        self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
+    }
+
+    fn draw_cursor(&mut self, term: &Term) {
+        self.undraw_cursor(term);
+
         if self.mode.contains(WinMode::HIDE) || (term.c.blink && blink_hide()) {
-	    return;
-	}
+            return;
+        }
 
         let (x, y) = (term.c.x, term.c.y);
+
         match term.c.mode {
             CursorMode::Block => {
                 let g = term.get_glyph_at_cursor();
@@ -432,6 +439,8 @@ impl Win {
                 );
             }
         }
+
+        (self.cursor_x, self.cursor_y) = (x, y);
     }
 
     fn mouse_report(&mut self, xev: &x11::XButtonEvent, term: &mut Term, pty: &mut Pty) {
@@ -784,8 +793,8 @@ impl Win {
             }
         }
         if attr.contains(GlyphAttr::INVISIBLE) ||
-	    (attr.contains(GlyphAttr::BLINK) && blink_hide()) {
-	    fg = bg;
+            (attr.contains(GlyphAttr::BLINK) && blink_hide()) {
+            fg = bg;
         }
 
         x11::XftDrawRect(self.draw, &bg, xp, yp, width, self.ch);
