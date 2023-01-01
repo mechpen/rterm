@@ -61,9 +61,8 @@ pub struct Term {
     pub prop: GlyphProp,
     saved_c: Option<Cursor>,
     saved_alt_c: Option<Cursor>,
-    // lines contains the main and alternate screens, access it through the
-    // lines() and lines_mut() functions to not have to worry about indexing.
     lines: Vec<Vec<Glyph>>,
+    alt_lines: Vec<Vec<Glyph>>,
     tabs: Vec<bool>,
     mode: TermMode,
     sel: Selection,
@@ -76,6 +75,7 @@ impl Term {
             cols: 0,
             c: Cursor::new(),
             lines: Vec::new(),
+            alt_lines: Vec::new(),
             dirty: Vec::new(),
             scroll_top: 0,
             scroll_bot: 0,
@@ -108,10 +108,16 @@ impl Term {
             self.scroll_up(0, self.c.y - rows + 1)
         }
 
-        // Double size to hold the main and alternate screens.
-        self.lines.resize_with(rows * 2, Vec::new);
+        self.lines.resize_with(rows, Vec::new);
         self.lines.shrink_to_fit();
         for line in self.lines.iter_mut() {
+            line.resize(cols, blank_glyph());
+            line.shrink_to_fit();
+        }
+
+        self.alt_lines.resize_with(rows, Vec::new);
+        self.alt_lines.shrink_to_fit();
+        for line in self.alt_lines.iter_mut() {
             line.resize(cols, blank_glyph());
             line.shrink_to_fit();
         }
@@ -491,18 +497,6 @@ impl Term {
         self.set_dirty(0..self.dirty.len());
     }
 
-    pub fn setdirtattr(&mut self, attr: GlyphAttr) {
-        let start = self.first_line();
-        for i in 0..self.rows {
-            for g in self.lines[start + i].iter() {
-                if g.prop.attr.contains(attr) {
-                    self.dirty[i] = true;
-                    break;
-                }
-            }
-        }
-    }
-
     fn normalize_selection(&mut self) {
         let (mut nb, mut ne) = sort_pair(self.sel.ob, self.sel.oe);
 
@@ -623,29 +617,20 @@ impl Term {
     }
 
     #[inline]
-    fn first_line(&self) -> usize {
-        if self.mode.contains(TermMode::ALTSCREEN) {
-            self.rows
-        } else {
-            0
-        }
-    }
-
-    #[inline]
     fn lines(&self) -> &[Vec<Glyph>] {
         if self.mode.contains(TermMode::ALTSCREEN) {
-            &self.lines[self.rows..]
+            &self.alt_lines
         } else {
-            &self.lines[0..self.rows]
+            &self.lines
         }
     }
 
     #[inline]
     fn lines_mut(&mut self) -> &mut [Vec<Glyph>] {
         if self.mode.contains(TermMode::ALTSCREEN) {
-            &mut self.lines[self.rows..]
+            &mut self.alt_lines
         } else {
-            &mut self.lines[0..self.rows]
+            &mut self.lines
         }
     }
 }

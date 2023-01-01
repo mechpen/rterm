@@ -2,7 +2,7 @@ use crate::pty::Pty;
 use crate::term::Term;
 use crate::utils::{parse_geometry, epoch_ms};
 use crate::vte::Vte;
-use crate::win::Win;
+use crate::win::{Win, next_blink_timeout};
 use crate::Result;
 use nix;
 use nix::errno::Errno;
@@ -13,11 +13,10 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-static RUNNING: AtomicBool = AtomicBool::new(true);
-
 const MIN_DRAW_DELAY_MS: i64 = 5;
 const MAX_DRAW_DELAY_MS: i64 = 50;
-const BLINK_PERIOD_MS: i64 = 5000000000;
+
+static RUNNING: AtomicBool = AtomicBool::new(true);
 
 fn is_running() -> bool {
     RUNNING.load(Ordering::Relaxed)
@@ -35,11 +34,6 @@ fn set_sigchld() {
     unsafe {
         signal(Signal::SIGCHLD, handler).unwrap();
     }
-}
-
-// FIXME: move to win
-fn next_blink_timeout() -> i64 {
-    BLINK_PERIOD_MS - epoch_ms() % BLINK_PERIOD_MS
 }
 
 // Data flow:

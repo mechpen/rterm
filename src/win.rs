@@ -11,7 +11,7 @@ use crate::pty::Pty;
 use crate::shortcut::find_shortcut;
 use crate::snap::Snap;
 use crate::term::Term;
-use crate::utils::term_decode;
+use crate::utils::{epoch_ms, term_decode};
 use crate::x11_wrapper as x11;
 use crate::{Error, Result};
 use bitflags::bitflags;
@@ -49,6 +49,12 @@ const BORDERPX: usize = 0;
 const CURSORTHICKNESS: usize = 2;
 
 const FORCEMOUSEMOD: u32 = x11::ShiftMask;
+
+const BLINK_PERIOD_MS: i64 = 1_000;
+
+pub fn next_blink_timeout() -> i64 {
+    BLINK_PERIOD_MS - epoch_ms() % BLINK_PERIOD_MS
+}
 
 pub struct Win {
     visible: bool,
@@ -326,17 +332,11 @@ impl Win {
         self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
     }
 
-    pub fn toggle_blink(&mut self) {
-        self.mode
-            .set(WinMode::BLINK, !self.mode.contains(WinMode::BLINK));
-    }
-
     pub fn draw(&mut self, term: &mut Term) {
         if !self.visible {
             return;
         }
 
-        term.setdirtattr(GlyphAttr::BLINK);
         for y in 0..term.rows {
             if !term.dirty[y] {
                 continue;
