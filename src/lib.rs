@@ -30,4 +30,6 @@ mod vte;
 mod win;
 mod x11_wrapper;
 
+// FIXME: put all config into one mod
+
 pub mod app;
