@@ -179,15 +179,6 @@ impl Win {
         x11::XMapWindow(dpy, win);
         x11::XSync(dpy, x11::False);
 
-        loop {
-            let mut xev = x11::XNextEvent(dpy);
-            if x11::XFilterEvent(&mut xev, win) == x11::True {
-                continue;
-            }
-            if x11::event_type(&xev) == x11::MAP_NOTIFY {
-                break;
-            }
-        }
         let netwmname = x11::XInternAtom(dpy, "_NET_WM_NAME", x11::False);
         let netwmiconname = x11::XInternAtom(dpy, "_NET_WM_ICON_NAME", x11::False);
 
@@ -424,6 +415,7 @@ impl Win {
             let xev_type = x11::event_type(&xev);
             match xev_type {
                 x11::EXPOSE => (),
+                x11::MAP_NOTIFY => (),
                 x11::KEY_RELEASE => (),
                 x11::KEY_PRESS => self.key_press(xev, term, pty),
                 x11::CLIENT_MESSAGE => self.client_message(xev),
