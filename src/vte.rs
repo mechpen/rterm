@@ -431,7 +431,7 @@ impl<'a> Perform for Performer<'a> {
                                         bell_terminated,
                                     );
                                 } else if let Err(err) = self.win.setcolor(idx, Some(&name)) {
-                                    println!("OSC 4 error: {}", err.msg);
+                                    println!("OSC 4 error: {}", err);
                                 }
                             } else {
                                 println!(
@@ -459,7 +459,7 @@ impl<'a> Perform for Performer<'a> {
                         if name == "?" {
                             self.send_color_osc(FG_COLOR, "10", bell_terminated);
                         } else if let Err(err) = self.win.setcolor(FG_COLOR as u16, Some(&name)) {
-                            println!("OSC 10 error: {}", err.msg);
+                            println!("OSC 10 error: {}", err);
                         }
                     } else {
                         println!("OSC 10, to many parameters");
@@ -479,7 +479,7 @@ impl<'a> Perform for Performer<'a> {
                         if name == "?" {
                             self.send_color_osc(BG_COLOR, "11", bell_terminated);
                         } else if let Err(err) = self.win.setcolor(BG_COLOR as u16, Some(&name)) {
-                            println!("OSC 11 error: {}", err.msg);
+                            println!("OSC 11 error: {}", err);
                         }
                     } else {
                         println!("OSC 11, to many parameters");
@@ -500,7 +500,7 @@ impl<'a> Perform for Performer<'a> {
                             self.send_color_osc(CURSOR_COLOR, "12", bell_terminated);
                         } else if let Err(err) = self.win.setcolor(CURSOR_COLOR as u16, Some(&name))
                         {
-                            println!("OSC 12 error: {}", err.msg);
+                            println!("OSC 12 error: {}", err);
                         }
                     } else {
                         println!("OSC 12, to many parameters");
@@ -520,7 +520,7 @@ impl<'a> Perform for Performer<'a> {
                     if let Ok(idx) = String::from_utf8_lossy(col_idx).parse::<u16>() {
                         if (idx as usize) < self.win.num_colors() {
                             if let Err(err) = self.win.setcolor(idx, None) {
-                                println!("OSC 104 error: {}", err.msg);
+                                println!("OSC 104 error: {}", err);
                             }
                         } else {
                             println!(
@@ -543,7 +543,7 @@ impl<'a> Perform for Performer<'a> {
                 params.next(); // skip the consumed param
                 if params.next().is_none() {
                     if let Err(err) = self.win.setcolor(FG_COLOR as u16, Some(FG_COLOR_NAME)) {
-                        println!("OSC 110 error: {}", err.msg);
+                        println!("OSC 110 error: {}", err);
                     }
                 } else {
                     println!("OSC 110 takes no parameters");
@@ -556,7 +556,7 @@ impl<'a> Perform for Performer<'a> {
                 params.next(); // skip the consumed param
                 if params.next().is_none() {
                     if let Err(err) = self.win.setcolor(BG_COLOR as u16, Some(BG_COLOR_NAME)) {
-                        println!("OSC 111 error: {}", err.msg);
+                        println!("OSC 111 error: {}", err);
                     }
                 } else {
                     println!("OSC 111 takes no parameters");
@@ -572,7 +572,7 @@ impl<'a> Perform for Performer<'a> {
                         .win
                         .setcolor(CURSOR_COLOR as u16, Some(CURSOR_COLOR_NAME))
                     {
-                        println!("OSC 112 error: {}", err.msg);
+                        println!("OSC 112 error: {}", err);
                     }
                 } else {
                     println!("OSC 112 takes no parameters");
@@ -756,6 +756,20 @@ impl<'a> Perform for Performer<'a> {
                     }
                 }
             }
+            // DECSLPP
+            ('t', None) => match arg0_or(0) {
+                22 => {
+                    if let Some(title) = self.win.title() {
+                        self.term.push_title(title);
+                    }
+                }
+                23 => {
+                    if let Some(title) = self.term.pop_title() {
+                        self.win.settitle(&title);
+                    }
+                }
+                _ => (),
+            },
             // DECSCUSR -- Set Cursor Style
             ('q', Some(b' ')) => {
                 if let Some(arg0) = arg0 {

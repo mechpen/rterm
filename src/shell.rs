@@ -1,4 +1,4 @@
-use crate::Result;
+use anyhow::Result;
 use nix::sys::signal::{signal, SigHandler, Signal};
 use nix::unistd::execvp;
 use nix::unistd::{Uid, User};

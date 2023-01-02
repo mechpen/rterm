@@ -1,4 +1,4 @@
-use crate::Result;
+use anyhow::{anyhow, Result};
 use std::cmp;
 use std::time::SystemTime;
 
@@ -78,7 +78,7 @@ pub fn parse_geometry(s: &str) -> Result<(usize, usize, usize, usize)> {
     let s = fields[0];
     let fields = s.split('x').collect::<Vec<&str>>();
     if fields.len() != 2 {
-        return Err("invalid geometry".into());
+        return Err(anyhow!("invalid geometry"));
     }
 
     let cols = fields[0].parse::<usize>()?;

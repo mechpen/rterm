@@ -1,6 +1,6 @@
 use crate::glyph::GlyphAttr;
 use crate::x11_wrapper as x11;
-use crate::Result;
+use anyhow::Result;
 use std::ffi::CString;
 use std::os::raw::c_int;
 

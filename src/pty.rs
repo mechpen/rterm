@@ -1,5 +1,5 @@
 use crate::shell::exec_shell;
-use crate::Result;
+use anyhow::Result;
 use nix::errno::Errno;
 use nix::ioctl_write_ptr_bad;
 use nix::libc;

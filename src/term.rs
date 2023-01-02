@@ -7,7 +7,7 @@ use crate::glyph::{blank_glyph, Glyph, GlyphAttr, GlyphProp};
 use crate::point::Point;
 use crate::snap::{is_delim, SnapMode};
 use crate::utils::{is_between, limit, sort_pair};
-use crate::Result;
+use anyhow::Result;
 use bitflags::bitflags;
 use unicode_width::UnicodeWidthChar;
 use std::cmp;
@@ -67,6 +67,7 @@ pub struct Term {
     tabs: Vec<bool>,
     mode: TermMode,
     sel: Selection,
+    titles: Vec<String>,
 }
 
 impl Term {
@@ -88,6 +89,7 @@ impl Term {
             sel: Selection::new(),
             saved_c: None,
             alt_saved_c: None,
+            titles: Vec::new(),
         };
 
         term.resize(cols, rows);
@@ -423,6 +425,14 @@ impl Term {
 
     pub fn set_tab(&mut self, x: usize) {
         self.tabs[x] = true;
+    }
+
+    pub fn push_title(&mut self, title: String) {
+        self.titles.push(title);
+    }
+
+    pub fn pop_title(&mut self) -> Option<String> {
+        return self.titles.pop();
     }
 
     pub fn start_selection(&mut self, x: usize, y: usize, mode: SnapMode) {

@@ -3,7 +3,7 @@ use crate::term::Term;
 use crate::utils::{parse_geometry, epoch_ms};
 use crate::vte::Vte;
 use crate::win::{Win, next_blink_timeout};
-use crate::Result;
+use anyhow::Result;
 use nix;
 use nix::errno::Errno;
 use nix::sys::select::{select, FdSet};

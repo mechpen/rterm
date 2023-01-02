@@ -1,6 +1,6 @@
 [package]
 name = "rterm"
-version = "0.0.6"
+version = "0.0.7"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "A port of suckless terminal to rust."
@@ -14,7 +14,5 @@ vte = ">=0.10"
 bitflags = ">=1.2"
 unicode-width = ">=0.1"
 servo-fontconfig = ">=0.5"
-
-[[bin]]
-name = "rterm"
-path = "src/bin/main.rs"
+anyhow = ">=1.0"
+clap = {version = ">=3", features = ["derive"]}
