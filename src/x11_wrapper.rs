@@ -1,14 +1,16 @@
 #![allow(non_snake_case)]
 
 use crate::color::COLOR_NAMES;
-use anyhow::{anyhow, Result};
-use fontconfig::fontconfig as fc;
+
 use std::convert::TryInto;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::mem;
 use std::os::raw::*;
 use std::ptr::{null, null_mut};
+
+use anyhow::{anyhow, Result};
+use fontconfig::fontconfig as fc;
 use x11::xft;
 use x11::xlib;
 

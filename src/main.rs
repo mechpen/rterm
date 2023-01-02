@@ -1,8 +1,9 @@
-extern crate rterm;
+use rterm::app::App;
+
+use std::process::exit;
 
 use anyhow::Result;
 use clap::Parser;
-use rterm::app::App;
 
 #[derive(Parser)]
 #[clap(version, about)]
@@ -35,5 +36,5 @@ fn main() {
             -1
         }
     };
-    std::process::exit(ret);
+    exit(ret);
 }

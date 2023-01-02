@@ -1,5 +1,7 @@
 use crate::win::WinMode;
+
 use std::os::raw::*;
+
 use x11::keysym::*;
 use x11::xlib::*;
 

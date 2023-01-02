@@ -1,17 +1,21 @@
 // control sequence references:
-// - https://bjh21.me.uk/all-escapes/all-escapes.txt
-// - https://ttssh2.osdn.jp/manual/4/en/about/ctrlseq.html
+// - https://vt100.net/
+// - https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
 
 use crate::charset::{Charset, CharsetIndex};
 use crate::color::{
-    BG_COLOR, BG_COLOR_NAME, CURSOR_COLOR, CURSOR_COLOR_NAME, FG_COLOR, FG_COLOR_NAME,
+    BG_COLOR, BG_COLOR_NAME,
+    FG_COLOR, FG_COLOR_NAME,
+    CURSOR_COLOR, CURSOR_COLOR_NAME,
 };
 use crate::cursor::CursorMode;
 use crate::glyph::GlyphAttr;
 use crate::pty::Pty;
 use crate::term::{Term, TermMode};
 use crate::win::{Win, WinMode};
+
 use std::iter;
+
 use vte::{Params, ParamsIter, Parser, Perform};
 
 const NAME: &str = env!("CARGO_PKG_NAME");
@@ -35,8 +39,7 @@ impl Vte {
         &mut self, buf: &[u8], win: &mut Win, term: &mut Term, pty: &mut Pty
     ) {
         let mut performer = Performer::new(win, term, pty, self.last_c.take());
-        buf.iter()
-            .for_each(|&b| self.parser.advance(&mut performer, b));
+        buf.iter().for_each(|&b| self.parser.advance(&mut performer, b));
         self.last_c = performer.last_c.take();
     }
 }
@@ -82,42 +85,42 @@ impl<'a> Performer<'a> {
                 return 0;
             }
             match op[0] {
+                // direct color in RGB space
                 2 => {
-                    /* direct color in RGB space */
                     let r = getcolor(params);
                     let g = getcolor(params);
                     let b = getcolor(params);
                     if let (Some(r), Some(g), Some(b)) = (r, g, b) {
                         if r > 255 || g > 255 || b > 255 {
-                            println!("erresc: bad rgb color ({},{},{})\n", r, g, b);
+                            println!("bad rgb color ({},{},{})\n", r, g, b);
                         } else {
-                            color = 1 << 24 | (r as usize) << 16 | (g as usize) << 8 | b as usize;
+                            color = 1 << 24
+                                | (r as usize) << 16
+                                | (g as usize) << 8
+                                | b as usize;
                         }
                     } else {
-                        println!("erresc(38/48): Incorrect number of parameters: expected three\n");
+                        println!("Incorrect number of rgb parameters");
                     }
                 }
+                // indexed color
                 5 => {
-                    /* indexed color */
                     if let Some(c) = getcolor(params) {
                         if c <= 255 {
                             color = c as usize;
                         } else {
-                            println!(
-                                "erresc(38/48): Incorrect parameter {} greater than 255\n",
-                                c
-                            );
+                            println!("Incorrect color index: {}", c);
                         }
                     } else {
-                        println!("erresc(38/48): Incorrect parameter (too few or invalid)\n");
+                        println!("Missing color index parameter");
                     }
                 }
-                0 => {} /* implemented defined (only foreground) */
-                1 => {} /* transparent */
-                3 => {} /* direct color in CMY space */
-                4 => {} /* direct color in CMYK space */
+                0 => {} // implemented defined (only foreground)
+                1 => {} // transparent
+                3 => {} // direct color in CMY space
+                4 => {} // direct color in CMYK space
                 x => {
-                    println!("erresc(38/48): gfx attr {} unknown\n", x);
+                    println!("gfx attr {} unknown\n", x);
                 }
             }
         } else {
@@ -166,7 +169,9 @@ impl<'a> Performer<'a> {
         }
     }
 
-    fn set_mode(&mut self, intermediate: Option<&u8>, params: &Params, val: bool) {
+    fn set_mode(
+        &mut self, intermediate: Option<&u8>, params: &Params, val: bool
+    ) {
         let private = match intermediate {
             Some(b'?') => true,
             None => false,
@@ -255,31 +260,25 @@ impl<'a> Performer<'a> {
         } else {
             for param in params.iter() {
                 match param[0] {
-                    4 =>
                     // IRM -- Insertion-replacement
-                    {
-                        self.term.set_mode(TermMode::INSERT, val)
-                    }
-                    12 =>
+                    4 => self.term.set_mode(TermMode::INSERT, val),
                     // SRM -- Send/Receive
-                    {
-                        self.win.set_mode(WinMode::ECHO, !val)
-                    }
-                    20 =>
+                    12 => self.win.set_mode(WinMode::ECHO, !val),
                     // LNM -- Linefeed/new line
-                    {
-                        self.term.set_mode(TermMode::CRLF, val)
-                    }
+                    20 => self.term.set_mode(TermMode::CRLF, val),
                     _ => (),
                 }
             }
         }
     }
 
-    fn send_color_osc(&mut self, idx: usize, leader: &str, bell_terminated: bool) {
+    fn send_color_osc(
+        &mut self, idx: usize, leader: &str, bell_terminated: bool
+    ) {
         let mut v: Vec<u8> = vec![0x1b];
         v.extend_from_slice(
-            format!("]{};{}", leader, self.win.get_color_osc(idx).unwrap()).as_bytes(),
+            format!("]{};{}", leader, self.win.get_color_osc(idx).unwrap())
+                .as_bytes(),
         );
         if bell_terminated {
             v.push(0x07);
@@ -303,34 +302,20 @@ impl<'a> Perform for Performer<'a> {
         let term = &mut *self.term;
 
         match byte {
-            0x07 => // BEL
-            {
-                win.bell()
-            }
-            0x08 => // BS
-            {
-                term.move_to(term.c.x.saturating_sub(1), term.c.y)
-            }
-            0x09 => // HT
-            {
-                term.put_tabs(1)
-            }
-            0x0D => // CR
-            {
-                term.move_to(0, term.c.y)
-            }
-            0x0A | 0x0B | 0x0C => // LF VT FF
-            {
-                term.new_line(false)
-            }
-            0x0E => // SO
-            {
-                term.charset.set_current(CharsetIndex::G1)
-            }
-            0x0F => // SI
-            {
-                term.charset.set_current(CharsetIndex::G0)
-            }
+            // BEL
+            0x07 => win.bell(),
+            // BS
+            0x08 => term.move_to(term.c.x.saturating_sub(1), term.c.y),
+            // HT
+            0x09 => term.put_tabs(1),
+            // CR
+            0x0D => term.move_to(0, term.c.y),
+            // LF VT FF
+            0x0A | 0x0B | 0x0C => term.new_line(false),
+            // SO
+            0x0E => term.charset.set_current(CharsetIndex::G1),
+            // SI
+            0x0F => term.charset.set_current(CharsetIndex::G0),
             _ => println!("unknown control {:02x}", byte),
         }
     }
@@ -349,28 +334,28 @@ impl<'a> Perform for Performer<'a> {
                 term.charset.setup(CharsetIndex::G2, Charset::Ascii),
             (b'B', Some(b'+')) =>
                 term.charset.setup(CharsetIndex::G3, Charset::Ascii),
-            (b'D', None) => // IND -- Linefeed
-                term.new_line(false),
-            (b'E', None) => // NEL -- Next line
-                term.new_line(true),
-            (b'H', None) => // HTS -- Horizontal tab stop
-                term.set_tab(term.c.x),
-            (b'M', None) => // RI -- Reverse index
-            {
+            // IND -- Linefeed
+            (b'D', None) => term.new_line(false),
+            // NEL -- Next line
+            (b'E', None) => term.new_line(true),
+            // HTS -- Horizontal tab stop
+            (b'H', None) => term.set_tab(term.c.x),
+            // RI -- Reverse index
+            (b'M', None) => {
                 if term.c.y == term.scroll_top {
                     term.scroll_down(term.scroll_top, 1);
                 } else {
                     term.move_to(term.c.x, term.c.y - 1);
                 }
             }
-            (b'Z', None) => // DECID -- Identify Terminal
-                self.pty.write(VTIDEN),
-            (b'c', None) => // RIS -- Reset to initial state
-            {
+            // DECID -- Identify Terminal
+            (b'Z', None) => self.pty.write(VTIDEN),
+            // RIS -- Reset to initial state
+            (b'c', None) => {
                 win.reset_colors();
-                // reset title...
                 term.reset()
-            } // FIXME: reset title and etc.
+                // FIXME: reset title and etc.
+            }
             (b'0', Some(b'(')) =>
                 term.charset.setup(CharsetIndex::G0, Charset::Graphic0),
             (b'0', Some(b')')) =>
@@ -379,20 +364,21 @@ impl<'a> Perform for Performer<'a> {
                 term.charset.setup(CharsetIndex::G2, Charset::Graphic0),
             (b'0', Some(b'+')) =>
                 term.charset.setup(CharsetIndex::G3, Charset::Graphic0),
-            (b'7', None) => // DECSC -- Save Cursor
-                term.save_cursor(),
-            (b'8', None) => // DECRC -- Restore Cursor
-                term.load_cursor(),
-            (b'=', None) => // DECPAM -- Application keypad
-                win.set_mode(WinMode::APPKEYPAD, true),
-            (b'>', None) => // DECPNM -- Normal keypad
-                win.set_mode(WinMode::APPKEYPAD, false),
-            (b'\\', None) => // ST -- String Terminator
-                {}
+            // DECSC -- Save Cursor
+            (b'7', None) => term.save_cursor(),
+            // DECRC -- Restore Cursor
+            (b'8', None) => term.load_cursor(),
+            // DECPAM -- Application keypad
+            (b'=', None) => win.set_mode(WinMode::APPKEYPAD, true),
+            // DECPNM -- Normal keypad
+            (b'>', None) => win.set_mode(WinMode::APPKEYPAD, false),
+            // ST -- String Terminator
+            (b'\\', None) => {}
             _ => println!("unknown esc {:?} {}", intermediate, byte as char),
         }
     }
 
+    // FIXME: styling
     fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
         if params.is_empty() {
             return;
@@ -416,7 +402,7 @@ impl<'a> Perform for Performer<'a> {
             }
             b"52" => {} // FIXME
             b"4" => {
-                /* color set, color index;spec */
+                // color set, color index;spec
                 let mut params = params.iter();
                 params.next(); // skip the param "4"
                 while let Some(col_idx) = params.next() {
@@ -593,6 +579,7 @@ impl<'a> Perform for Performer<'a> {
         action: char,
     ) {
         let term = &mut *self.term;
+        let (x, y) = (term.c.x, term.c.y);
 
         if has_ignored_intermediates || intermediates.len() > 1 {
             println!("invalid csi intermediates {:?}", intermediates);
@@ -614,15 +601,14 @@ impl<'a> Perform for Performer<'a> {
                 .unwrap_or(default)
         };
 
-        // FIXME? i
         match (action, intermediate) {
             // ICH -- Insert <n> blank char
             ('@', None) => term.insert_blanks(arg0_or(1)),
             // CUU -- Cursor <n> Up
-            ('A', None) => term.move_to(term.c.x, term.c.y.saturating_sub(arg0_or(1))),
+            ('A', None) => term.move_to(x, y.saturating_sub(arg0_or(1))),
             // CUD -- Cursor <n> Down
             // VPR -- Cursor <n> Down
-            ('B', None) | ('e', None) => term.move_to(term.c.x, term.c.y + arg0_or(1)),
+            ('B', None) | ('e', None) => term.move_to(x, y + arg0_or(1)),
             // REP -- Print last char <n> times
             ('b', None) => {
                 if let Some(c) = self.last_c {
@@ -632,86 +618,59 @@ impl<'a> Perform for Performer<'a> {
                 }
             }
             // CUF -- Cursor <n> Forward | HPR -- Cursor <n> Forward
-            ('C', None) | ('a', None) => term.move_to(term.c.x + arg0_or(1), term.c.y),
+            ('C', None) | ('a', None) => term.move_to(x + arg0_or(1), y),
             // DA -- Device Attributes
             ('c', _) if arg0_or(0) == 0 => self.pty.write(VTIDEN),
             // CUB -- Cursor <n> Backward
-            ('D', None) => term.move_to(term.c.x.saturating_sub(arg0_or(1)), term.c.y),
+            ('D', None) => term.move_to(x.saturating_sub(arg0_or(1)), y),
             // VPA -- Move to <row>
-            ('d', None) => term.move_ato(term.c.x, arg0_or(1) - 1),
+            ('d', None) => term.move_ato(x, arg0_or(1) - 1),
             // CNL -- Cursor <n> Down and first col
-            ('E', None) => term.move_to(0, term.c.y + arg0_or(1)),
+            ('E', None) => term.move_to(0, y + arg0_or(1)),
             // CPL -- Cursor <n> Up and first col
-            ('F', None) => term.move_to(0, term.c.y.saturating_sub(arg0_or(1))),
+            ('F', None) => term.move_to(0, y.saturating_sub(arg0_or(1))),
             // CHA -- Move to <col> | HPA
-            ('G', None) | ('`', None) => term.move_to(arg0_or(1) - 1, term.c.y),
+            ('G', None) | ('`', None) => term.move_to(arg0_or(1) - 1, y),
             // TBC -- Tabulation clear
-            ('g', None) => {
-                match arg0_or(0) {
-                    0 =>
-                    // clear current tab stop
-                    {
-                        term.clear_tabs(iter::once(term.c.x))
-                    }
-                    3 =>
-                    // clear all the tabs
-                    {
-                        term.clear_tabs(0..term.cols)
-                    }
-                    x => println!("unknown TBC {}", x),
-                }
+            ('g', None) => match arg0_or(0) {
+                // clear current tab stop
+                0 => term.clear_tabs(iter::once(x)),
+                // clear all the tabs
+                3 => term.clear_tabs(0..term.cols),
+                v => println!("unknown TBC {}", v),
             }
             // CUP -- Move to <row> <col> |  HVP
-            ('H', None) | ('f', None) => term.move_ato(arg1_or(1) - 1, arg0_or(1) - 1),
+            ('H', None) | ('f', None) =>
+                term.move_ato(arg1_or(1) - 1, arg0_or(1) - 1),
             // SM -- Set terminal mode
             ('h', intermediate) => self.set_mode(intermediate, params, true),
             // CHT -- Cursor Forward Tabulation <n> tab stops
             ('I', None) => term.put_tabs(arg0_or(1) as i32),
             // ED -- Clear screen
-            ('J', None) => {
-                let y = term.c.y;
-                match arg0_or(0) {
-                    0 =>
-                    // below
-                    {
-                        term.clear_region(term.c.x..term.cols, iter::once(y));
-                        term.clear_region(0..term.cols, y + 1..term.rows);
-                    }
-                    1 =>
-                    // above
-                    {
-                        term.clear_region(0..term.cols, 0..y);
-                        term.clear_region(0..=term.c.x, iter::once(y));
-                    }
-                    2 =>
-                    // all
-                    {
-                        term.clear_region(0..term.cols, 0..term.rows)
-                    }
-                    x => println!("unknown ED {}", x),
+            ('J', None) => match arg0_or(0) {
+                // below
+                0 => {
+                    term.clear_region(x..term.cols, iter::once(y));
+                    term.clear_region(0..term.cols, y + 1..term.rows);
                 }
+                // above
+                1 => {
+                    term.clear_region(0..term.cols, 0..y);
+                    term.clear_region(0..=x, iter::once(y));
+                }
+                // all
+                2 => term.clear_screen(),
+                v => println!("unknown ED {}", v),
             }
             // EL erase line
-            ('K', None) => {
-                let y = term.c.y;
-                match arg0_or(0) {
-                    0 =>
-                    // right
-                    {
-                        term.clear_region(term.c.x..term.cols, iter::once(y))
-                    }
-                    1 =>
-                    // left
-                    {
-                        term.clear_region(0..=term.c.x, iter::once(y))
-                    }
-                    2 =>
-                    // all
-                    {
-                        term.clear_region(0..term.cols, iter::once(y))
-                    }
-                    x => println!("unknown EL {}", x),
-                }
+            ('K', None) => match arg0_or(0) {
+                // right
+                0 => term.clear_region(x..term.cols, iter::once(y)),
+                // left
+                1 => term.clear_region(0..=x, iter::once(y)),
+                // all
+                2 => term.clear_region(0..term.cols, iter::once(y)),
+                v => println!("unknown EL {}", v),
             }
             // IL -- Insert <n> blank lines
             ('L', None) => term.insert_lines(arg0_or(1)),
@@ -722,10 +681,8 @@ impl<'a> Perform for Performer<'a> {
             // SGR -- Terminal attribute (color)
             ('m', None) => self.set_glyph_attr(params),
             // DSR Device Status Report
-            ('n', None) if arg0_or(0) == 6 => {
-                let s = format!("\x1B[{};{}R", term.c.y + 1, term.c.x + 1);
-                self.pty.write(s.as_bytes());
-            }
+            ('n', None) if arg0_or(0) == 6 =>
+                self.pty.write(format!("\x1B[{};{}R", y + 1, x + 1).as_bytes()),
             // DCH -- Delete <n> char
             ('P', None) => term.delete_chars(arg0_or(1)),
             // DECSTBM -- Set Scrolling Region
@@ -744,17 +701,13 @@ impl<'a> Perform for Performer<'a> {
             // DECRC -- Restore cursor position (ANSI.SYS)
             ('u', None) => term.load_cursor(),
             // ECH -- Erase <n> char
-            ('X', None) => term.clear_region(term.c.x..term.c.x + arg0_or(1), iter::once(term.c.y)),
+            ('X', None) => term.clear_region(x..x + arg0_or(1), iter::once(y)),
             // CBT -- Cursor Backward Tabulation <n> tab stops
             ('Z', None) => term.put_tabs(-(arg0_or(1) as i32)),
             // XTVERSION -- Return the terminal name/version
-            ('q', Some(b'>')) => {
-                if let Some(arg0) = arg0 {
-                    if arg0.get(0) == Some(&0) {
-                        self.pty
-                            .write(format!("\x1bP>|{} {}\x1b\\", NAME, VERSION).as_bytes());
-                    }
-                }
+            ('q', Some(b'>')) if arg0_or(0) == 0 => {
+                let s = format!("\x1bP>|{} {}\x1b\\", NAME, VERSION);
+                self.pty.write(s.as_bytes());
             }
             // DECSLPP
             ('t', None) => match arg0_or(0) {
@@ -771,45 +724,42 @@ impl<'a> Perform for Performer<'a> {
                 _ => (),
             },
             // DECSCUSR -- Set Cursor Style
-            ('q', Some(b' ')) => {
-                if let Some(arg0) = arg0 {
-                    match arg0.get(0) {
-                        Some(0) | Some(1) => {
-                            // Blinking block
-                            term.c.mode = CursorMode::Block;
-                            term.c.blink = true;
-                        }
-                        Some(2) => {
-                            // block
-                            term.c.mode = CursorMode::Block;
-                            term.c.blink = false;
-                        }
-                        Some(3) => {
-                            // blinking underline
-                            term.c.mode = CursorMode::Underline;
-                            term.c.blink = true;
-                        }
-                        Some(4) => {
-                            // underline
-                            term.c.mode = CursorMode::Underline;
-                            term.c.blink = false;
-                        }
-                        Some(5) => {
-                            // blinking bar
-                            term.c.mode = CursorMode::Bar;
-                            term.c.blink = true;
-                        }
-                        Some(6) => {
-                            // bar
-                            term.c.mode = CursorMode::Bar;
-                            term.c.blink = false;
-                        }
-                        Some(arg) => println!("unknown csi cursor style {}, (0-6 valid)", arg),
-                        _ => println!("csi cursor style missing argument, (0-6)"),
-                    }
+            ('q', Some(b' ')) => match arg0_or(0) {
+                // Blinking block
+                0 | 1 => {
+                    term.c.mode = CursorMode::Block;
+                    term.c.blink = true;
                 }
+                // block
+                2 => {
+                    term.c.mode = CursorMode::Block;
+                    term.c.blink = false;
+                }
+                // blinking underline
+                3 => {
+                    term.c.mode = CursorMode::Underline;
+                    term.c.blink = true;
+                }
+                // underline
+                4 => {
+                    term.c.mode = CursorMode::Underline;
+                    term.c.blink = false;
+                }
+                // blinking bar
+                5 => {
+                    term.c.mode = CursorMode::Bar;
+                    term.c.blink = true;
+                }
+                // bar
+                6 => {
+                    term.c.mode = CursorMode::Bar;
+                    term.c.blink = false;
+                }
+                v => println!("unknown cursor style {}", v),
             }
-            _ => println!("unknown csi {:?} {:?} {}", intermediates, params, action),
+            _ => println!(
+                "unknown csi {:?} {:?} {}", intermediates, params, action
+            ),
         }
     }
 }

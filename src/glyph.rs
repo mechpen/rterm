@@ -1,6 +1,8 @@
 use crate::color::{BG_COLOR, FG_COLOR};
-use bitflags::bitflags;
+
 use std::mem;
+
+use bitflags::bitflags;
 
 bitflags! {
     pub struct GlyphAttr: u16 {

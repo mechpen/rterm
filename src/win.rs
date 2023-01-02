@@ -1,7 +1,8 @@
 use crate::app::app_exit;
 use crate::color::{
-    BG_COLOR, BG_COLOR_NAME, CURSOR_COLOR, CURSOR_COLOR_NAME, CURSOR_REV_COLOR,
-    CURSOR_REV_COLOR_NAME, FG_COLOR_NAME,
+    BG_COLOR, BG_COLOR_NAME, FG_COLOR_NAME,
+    CURSOR_COLOR, CURSOR_COLOR_NAME,
+    CURSOR_REV_COLOR, CURSOR_REV_COLOR_NAME,
 };
 use crate::cursor::CursorMode;
 use crate::font::Font;
@@ -13,12 +14,14 @@ use crate::snap::Snap;
 use crate::term::Term;
 use crate::utils::{epoch_ms, term_decode};
 use crate::x11_wrapper as x11;
-use anyhow::{anyhow, Result};
-use bitflags::bitflags;
+
 use std::os::raw::*;
 use std::os::unix::io::RawFd;
 use std::ptr::null_mut;
 use std::slice;
+
+use anyhow::{anyhow, Result};
+use bitflags::bitflags;
 
 bitflags! {
     pub struct WinMode: u32 {
@@ -259,8 +262,7 @@ impl Win {
         if idx as usize >= self.colors.len() {
             return Err(anyhow!(format!(
                 "setcolor: color index {} to large, max {}",
-                idx,
-                self.colors.len()
+                idx, self.colors.len()
             )));
         }
         let color = x11::xloadcolor(self.dpy, self.vis, self.cmap, idx, name)?;

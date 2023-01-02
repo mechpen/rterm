@@ -1,6 +1,8 @@
 use crate::term::Term;
 use crate::win::Win;
+
 use std::os::raw::*;
+
 use x11::keysym::*;
 use x11::xlib::*;
 

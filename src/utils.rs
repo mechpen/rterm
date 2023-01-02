@@ -1,6 +1,7 @@
-use anyhow::{anyhow, Result};
 use std::cmp;
 use std::time::SystemTime;
+
+use anyhow::{anyhow, Result};
 
 #[inline]
 pub fn is_between<T: PartialOrd>(x: T, a: T, b: T) -> bool {

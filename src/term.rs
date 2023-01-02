@@ -1,17 +1,19 @@
 // FIXME: support wide chars
 
 use crate::charset::CharsetTable;
-use crate::color::{BG_COLOR, CURSOR_COLOR, CURSOR_REV_COLOR, FG_COLOR};
+use crate::color::{BG_COLOR, FG_COLOR, CURSOR_COLOR, CURSOR_REV_COLOR};
 use crate::cursor::Cursor;
 use crate::glyph::{blank_glyph, Glyph, GlyphAttr, GlyphProp};
 use crate::point::Point;
 use crate::snap::{is_delim, SnapMode};
 use crate::utils::{is_between, limit, sort_pair};
+
+use std::cmp;
+use std::mem;
+
 use anyhow::Result;
 use bitflags::bitflags;
 use unicode_width::UnicodeWidthChar;
-use std::cmp;
-use std::mem;
 
 struct Selection {
     pub mode: SnapMode,

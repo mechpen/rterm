@@ -3,15 +3,17 @@ use crate::term::Term;
 use crate::utils::{parse_geometry, epoch_ms};
 use crate::vte::Vte;
 use crate::win::{Win, next_blink_timeout};
+
+use std::fs::File;
+use std::io::prelude::*;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use anyhow::Result;
 use nix;
 use nix::errno::Errno;
 use nix::sys::select::{select, FdSet};
 use nix::sys::signal::{signal, SigHandler, Signal};
 use nix::sys::time::{TimeVal, TimeValLike};
-use std::fs::File;
-use std::io::prelude::*;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIN_DRAW_DELAY_MS: i64 = 5;
 const MAX_DRAW_DELAY_MS: i64 = 50;

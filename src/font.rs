@@ -1,8 +1,10 @@
 use crate::glyph::GlyphAttr;
 use crate::x11_wrapper as x11;
-use anyhow::Result;
+
 use std::ffi::CString;
 use std::os::raw::c_int;
+
+use anyhow::Result;
 
 /*
  * Printable characters in ASCII, used to estimate the advance width

@@ -1,11 +1,11 @@
-use anyhow::Result;
-use nix::sys::signal::{signal, SigHandler, Signal};
-use nix::unistd::execvp;
-use nix::unistd::{Uid, User};
 use std::env;
 use std::ffi::CString;
 use std::os::unix::ffi::OsStringExt;
 use std::process::exit;
+
+use anyhow::Result;
+use nix::sys::signal::{signal, SigHandler, Signal};
+use nix::unistd::{execvp, Uid, User};
 
 fn _exec_shell() -> Result<()> {
     let user = User::from_uid(Uid::current())?.unwrap();

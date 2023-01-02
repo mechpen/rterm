@@ -1,4 +1,9 @@
 use crate::shell::exec_shell;
+
+use std::collections::VecDeque;
+use std::convert::TryFrom;
+use std::os::unix::io::RawFd;
+
 use anyhow::Result;
 use nix::errno::Errno;
 use nix::ioctl_write_ptr_bad;
@@ -6,9 +11,6 @@ use nix::libc;
 use nix::pty::{forkpty, ForkptyResult};
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::{read, write, ForkResult, Pid};
-use std::collections::VecDeque;
-use std::convert::TryFrom;
-use std::os::unix::io::RawFd;
 
 ioctl_write_ptr_bad!(resizepty, libc::TIOCSWINSZ, libc::winsize);
 
