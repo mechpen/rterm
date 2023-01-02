@@ -1,3 +1,7 @@
+// control sequence references:
+// - https://bjh21.me.uk/all-escapes/all-escapes.txt
+// - https://ttssh2.osdn.jp/manual/4/en/about/ctrlseq.html
+
 use crate::charset::{Charset, CharsetIndex};
 use crate::color::{
     BG_COLOR, BG_COLOR_NAME, CURSOR_COLOR, CURSOR_COLOR_NAME, FG_COLOR, FG_COLOR_NAME,
@@ -28,7 +32,7 @@ impl Vte {
     }
 
     pub fn process_input(
-	&mut self, buf: &[u8], win: &mut Win, term: &mut Term, pty: &mut Pty
+        &mut self, buf: &[u8], win: &mut Win, term: &mut Term, pty: &mut Pty
     ) {
         let mut performer = Performer::new(win, term, pty, self.last_c.take());
         buf.iter()
@@ -172,92 +176,77 @@ impl<'a> Performer<'a> {
         if private {
             for param in params.iter() {
                 match param[0] {
-                    1 =>
                     // DECCKM -- Cursor key
-                    {
-                        self.win.set_mode(WinMode::APPCURSOR, val)
-                    }
-                    5 =>
+                    1 => self.win.set_mode(WinMode::APPCURSOR, val),
                     // DECSCNM -- Reverse video
-                    {
-                        self.win.set_mode(WinMode::REVERSE, val)
-                    }
-                    6 =>
+                    5 => self.win.set_mode(WinMode::REVERSE, val),
                     // DECOM -- Origin
-                    {
+                    6 => {
                         self.term.set_mode(TermMode::ORIGIN, val);
                         self.term.move_ato(0, 0);
                     }
-                    7 =>
                     // DECAWM -- Auto wrap
-                    {
-                        self.term.set_mode(TermMode::WRAP, val)
-                    }
-                    25 =>
+                    7 => self.term.set_mode(TermMode::WRAP, val),
                     // DECTCEM -- Text Cursor Enable Mode
-                    {
-                        self.win.set_mode(WinMode::HIDE, !val)
-                    }
-                    9 =>
-                    /* X10 mouse compatibility mode */
-                    {
+                    25 => self.win.set_mode(WinMode::HIDE, !val),
+                    // X10 mouse compatibility mode
+                    9 => {
                         self.win.set_pointer_motion(false);
                         self.win.set_mode(WinMode::MOUSE, false);
                         self.win.set_mode(WinMode::MOUSEX10, val);
                     }
-                    1000 =>
-                    /* 1000: report button press */
-                    {
+                    // 1000: report button press
+                    1000 => {
                         self.win.set_pointer_motion(false);
                         self.win.set_mode(WinMode::MOUSE, false);
                         self.win.set_mode(WinMode::MOUSEBTN, val);
                     }
-                    1002 =>
-                    /* 1002: report motion on button press */
-                    {
+                    // 1002: report motion on button press
+                    1002 => {
                         self.win.set_pointer_motion(false);
                         self.win.set_mode(WinMode::MOUSE, false);
                         self.win.set_mode(WinMode::MOUSEMOTION, val);
                     }
-                    1003 =>
-                    /* 1003: enable all mouse motions */
-                    {
+                    // 1003: enable all mouse motions
+                    1003 => {
                         self.win.set_pointer_motion(val);
                         self.win.set_mode(WinMode::MOUSE, false);
                         self.win.set_mode(WinMode::MOUSEMANY, val);
                     }
-                    1004 =>
-                    /* 1004: send focus events to tty */
-                    {
-                        self.win.set_mode(WinMode::FOCUS, val);
-                    }
-                    1006 =>
-                    /* 1006: extended reporting mode */
-                    {
-                        self.win.set_mode(WinMode::MOUSESGR, val);
-                    }
+                    // 1004: send focus events to tty
+                    1004 => self.win.set_mode(WinMode::FOCUS, val),
+                    // 1006: extended reporting mode
+                    1006 => self.win.set_mode(WinMode::MOUSESGR, val),
                     1034 => self.win.set_mode(WinMode::EIGHT_BIT, val),
-                    47 | 1047 => {
-                        /* swap screen */
-                        let alt = self.term.in_mode(TermMode::ALTSCREEN);
-                        if alt {
-                            self.term.clear_region(0..self.term.cols, 0..self.term.rows);
-                        }
-                        if val ^ alt {
-                            self.term.swap_screen()
+                    // 1048: save/load cursor position
+                    1048 => {
+                        if val {
+                            self.term.save_cursor();
+                        } else {
+                            self.term.load_cursor();
                         }
                     }
-                    1048 => self.term.save_load_cursor(val),
-                    1049 => {
-                        /* swap screen & set/restore cursor as xterm */
-                        self.term.save_load_cursor(val);
-                        let alt = self.term.in_mode(TermMode::ALTSCREEN);
-                        if alt {
-                            self.term.clear_region(0..self.term.cols, 0..self.term.rows);
+                    // 47: swap screen
+                    47 => self.term.swap_screen(val),
+                    // 1047: swap screen and clear alt
+                    1047 => {
+                        if val {
+                            self.term.swap_screen(val);
+                        } else {
+                            self.term.clear_screen();
+                            self.term.swap_screen(val);
                         }
-                        if val ^ alt {
-                            self.term.swap_screen();
-                            self.term.save_load_cursor(val);
+                    }
+                    // 1049: save/load cursor, swap screen and clear alt
+                    1049 => {
+                        if val {
+                            self.term.save_cursor();
+                            self.term.swap_screen(val);
+                            self.term.clear_screen();
+                        } else {
+                            self.term.clear_screen();
+                            self.term.swap_screen(val);
+                            self.term.load_cursor();
                         }
                     }
                     _ => (),
@@ -353,13 +342,13 @@ impl<'a> Perform for Performer<'a> {
 
         match (byte, intermediate) {
             (b'B', Some(b'(')) =>
-		term.charset.setup(CharsetIndex::G0, Charset::Ascii),
+                term.charset.setup(CharsetIndex::G0, Charset::Ascii),
             (b'B', Some(b')')) =>
-		term.charset.setup(CharsetIndex::G1, Charset::Ascii),
+                term.charset.setup(CharsetIndex::G1, Charset::Ascii),
             (b'B', Some(b'*')) =>
-		term.charset.setup(CharsetIndex::G2, Charset::Ascii),
+                term.charset.setup(CharsetIndex::G2, Charset::Ascii),
             (b'B', Some(b'+')) =>
-		term.charset.setup(CharsetIndex::G3, Charset::Ascii),
+                term.charset.setup(CharsetIndex::G3, Charset::Ascii),
             (b'D', None) => // IND -- Linefeed
                 term.new_line(false),
             (b'E', None) => // NEL -- Next line
@@ -383,13 +372,13 @@ impl<'a> Perform for Performer<'a> {
                 term.reset()
             } // FIXME: reset title and etc.
             (b'0', Some(b'(')) =>
-		term.charset.setup(CharsetIndex::G0, Charset::Graphic0),
+                term.charset.setup(CharsetIndex::G0, Charset::Graphic0),
             (b'0', Some(b')')) =>
-		term.charset.setup(CharsetIndex::G1, Charset::Graphic0),
+                term.charset.setup(CharsetIndex::G1, Charset::Graphic0),
             (b'0', Some(b'*')) =>
-		term.charset.setup(CharsetIndex::G2, Charset::Graphic0),
+                term.charset.setup(CharsetIndex::G2, Charset::Graphic0),
             (b'0', Some(b'+')) =>
-		term.charset.setup(CharsetIndex::G3, Charset::Graphic0),
+                term.charset.setup(CharsetIndex::G3, Charset::Graphic0),
             (b'7', None) => // DECSC -- Save Cursor
                 term.save_cursor(),
             (b'8', None) => // DECRC -- Restore Cursor

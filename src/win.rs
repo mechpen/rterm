@@ -792,8 +792,9 @@ impl Win {
                 println!("Failed to alloc truecolor for FAINT")
             }
         }
-        if attr.contains(GlyphAttr::INVISIBLE) ||
-            (attr.contains(GlyphAttr::BLINK) && blink_hide()) {
+        if attr.contains(GlyphAttr::INVISIBLE)
+            || (attr.contains(GlyphAttr::BLINK) && blink_hide())
+        {
             fg = bg;
         }
 

@@ -3,7 +3,7 @@ rterm
 
 A port of [suckless terminal](https://st.suckless.org/) to rust.
 
-Most functions of `st` are implemented.  A few major features are missing:
+Most functions of `st` are implemented.  A few `st` features are missing:
 
 - XIM support
 - wide-char support

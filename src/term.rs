@@ -9,8 +9,9 @@ use crate::snap::{is_delim, SnapMode};
 use crate::utils::{is_between, limit, sort_pair};
 use crate::Result;
 use bitflags::bitflags;
-use std::cmp;
 use unicode_width::UnicodeWidthChar;
+use std::cmp;
+use std::mem;
 
 struct Selection {
     pub mode: SnapMode,
@@ -40,7 +41,6 @@ bitflags! {
         const INSERT      = 1 << 1;
         const ORIGIN      = 1 << 2;
         const CRLF        = 1 << 3;
-        const ALTSCREEN   = 1 << 4;
     }
 }
 
@@ -62,6 +62,7 @@ pub struct Term {
     alt_saved_c: Option<Cursor>,
     lines: Vec<Vec<Glyph>>,
     alt_lines: Vec<Vec<Glyph>>,
+    is_alt_screen: bool,
     dirty: Vec<bool>,
     tabs: Vec<bool>,
     mode: TermMode,
@@ -74,6 +75,7 @@ impl Term {
             rows: 0,
             cols: 0,
             c: Cursor::new(),
+            is_alt_screen: false,
             lines: Vec::new(),
             alt_lines: Vec::new(),
             dirty: Vec::new(),
@@ -150,19 +152,15 @@ impl Term {
         self.mode.set(mode, val);
     }
 
-    pub fn in_mode(&self, mode: TermMode) -> bool {
-        self.mode.contains(mode)
-    }
-
     pub fn get_glyph(&self, x: usize, y: usize) -> Glyph {
-        let mut g = self.lines()[y][x];
+        let mut g = self.lines[y][x];
         g.prop = g.prop.resolve(self.is_selected(x, y));
         g
     }
 
     pub fn get_glyph_at_cursor(&self) -> Glyph {
         let (x, y) = (self.c.x, self.c.y);
-        let mut g = self.lines()[y][x];
+        let mut g = self.lines[y][x];
         if self.is_selected(x, y) {
             g.prop.bg = CURSOR_REV_COLOR;
         } else {
@@ -198,17 +196,17 @@ impl Term {
     }
 
     pub fn is_line_dirty(&self, i: usize) -> bool {
-	if self.dirty[i] {
-	    return true;
-	}
+        if self.dirty[i] {
+            return true;
+        }
 
-	for g in self.lines()[i].iter() {
-	    if g.prop.attr.contains(GlyphAttr::BLINK) {
-		return true;
-	    }
-	}
+        for g in self.lines[i].iter() {
+            if g.prop.attr.contains(GlyphAttr::BLINK) {
+                return true;
+            }
+        }
 
-	return false
+        return false
     }
 
     pub fn clear_region<R1, R2>(&mut self, xrange: R1, yrange: R2)
@@ -221,12 +219,16 @@ impl Term {
         for y in yrange {
             self.dirty[y] = true;
             for x in xrange.clone() {
-                self.lines_mut()[y][x].clear(glyph);
+                self.lines[y][x].clear(glyph);
                 if self.is_selected(x, y) {
                     self.clear_selection();
                 }
             }
         }
+    }
+
+    pub fn clear_screen(&mut self) {
+        self.clear_region(0..self.cols, 0..self.rows)
     }
 
     fn clear_lines<R: Iterator<Item = usize>>(&mut self, range: R) {
@@ -255,7 +257,7 @@ impl Term {
 
         self.clear_lines(orig..orig + n);
         self.set_dirty(orig + n..=bottom, true);
-        self.lines_mut()[orig..=bottom].rotate_left(n);
+        self.lines[orig..=bottom].rotate_left(n);
 
         self.scroll_selection(orig, -(n as i32));
     }
@@ -270,7 +272,7 @@ impl Term {
 
         self.set_dirty(orig..bottom - n + 1, true);
         self.clear_lines(bottom - n + 1..=self.scroll_bot);
-        self.lines_mut()[orig..=bottom].rotate_right(n);
+        self.lines[orig..=bottom].rotate_right(n);
 
         self.scroll_selection(orig, n as i32);
     }
@@ -312,7 +314,7 @@ impl Term {
 
         let source = x..self.cols - n;
         let dest = x + n;
-        self.lines_mut()[y].copy_within(source, dest);
+        self.lines[y].copy_within(source, dest);
         self.clear_region(x..x + n, y..=y);
     }
 
@@ -320,7 +322,7 @@ impl Term {
         let (x, y, cols) = (self.c.x, self.c.y, self.cols);
         let n = cmp::min(n, cols - x);
 
-        self.lines_mut()[y].copy_within(x + n..cols, x);
+        self.lines[y].copy_within(x + n..cols, x);
         self.clear_region(cols - n..cols, y..=y);
     }
 
@@ -358,7 +360,7 @@ impl Term {
         if self.c.wrap_next {
             let y = self.c.y;
             // for wide chars, cursor is not at cols-1
-            self.lines_mut()[y][cols - 1]
+            self.lines[y][cols - 1]
                 .prop
                 .attr
                 .insert(GlyphAttr::WRAP);
@@ -381,10 +383,10 @@ impl Term {
         // x, y may have updated.
         let (x, y) = (self.c.x, self.c.y);
         self.dirty[y] = true;
-        self.lines_mut()[y][x].prop = self.prop;
-        self.lines_mut()[y][x].c = c;
+        self.lines[y][x].prop = self.prop;
+        self.lines[y][x].c = c;
         for x2 in x + 1..x + width {
-            self.lines_mut()[y][x2].prop.attr.insert(GlyphAttr::DUMMY);
+            self.lines[y][x2].prop.attr.insert(GlyphAttr::DUMMY);
         }
 
         self.c.x += width;
@@ -410,14 +412,6 @@ impl Term {
         if let Some(c) = self.saved_c {
             self.c = c;
             self.move_to(self.c.x, self.c.y);
-        }
-    }
-
-    pub fn save_load_cursor(&mut self, save: bool) {
-        if save {
-            self.save_cursor();
-        } else {
-            self.load_cursor();
         }
     }
 
@@ -476,7 +470,11 @@ impl Term {
         let mut string = String::new();
 
         for y in self.sel.nb.y..=self.sel.ne.y {
-            let start = if y == self.sel.nb.y { self.sel.nb.x } else { 0 };
+            let start = if y == self.sel.nb.y {
+                self.sel.nb.x
+            } else {
+                0
+            };
 
             let end = if y == self.sel.ne.y {
                 self.sel.ne.x
@@ -486,7 +484,7 @@ impl Term {
 
             let text_end = cmp::min(end + 1, self.text_len(y));
             for x in start..text_end {
-                string.push(self.lines()[y][x].c);
+                string.push(self.lines[y][x].c);
             }
 
             if end == self.cols - 1 && !self.is_wrap_line(y) {
@@ -497,10 +495,13 @@ impl Term {
         Some(string)
     }
 
-    pub fn swap_screen(&mut self) {
-        self.mode ^= TermMode::ALTSCREEN;
-	(self.saved_c, self.alt_saved_c) = (self.alt_saved_c, self.saved_c);
-        self.set_dirty(0..self.rows, true);
+    pub fn swap_screen(&mut self, alt_screen: bool) {
+        if self.is_alt_screen != alt_screen {
+            self.is_alt_screen = alt_screen;
+            mem::swap(&mut self.saved_c, &mut self.alt_saved_c);
+            mem::swap(&mut self.lines, &mut self.alt_lines);
+            self.set_dirty(0..self.rows, true);
+        }
     }
 
     fn normalize_selection(&mut self) {
@@ -569,7 +570,7 @@ impl Term {
         }
         if p.y > 0 {
             let p = Point::new(self.cols - 1, p.y - 1);
-            if self.lines()[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP) {
+            if self.lines[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP) {
                 return Some(p);
             }
         }
@@ -580,7 +581,9 @@ impl Term {
         if p.x < self.cols - 1 {
             return Some(Point::new(p.x + 1, p.y));
         }
-        if p.y < self.rows - 1 && self.lines()[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP) {
+        if p.y < self.rows - 1
+            && self.lines[p.y][p.x].prop.attr.contains(GlyphAttr::WRAP)
+        {
             return Some(Point::new(0, p.y + 1));
         }
         None
@@ -590,12 +593,12 @@ impl Term {
     where
         F: Fn(&Self, &Point) -> Option<Point>,
     {
-        let c = self.lines()[point.y][point.x].c;
+        let c = self.lines[point.y][point.x].c;
         let delim = is_delim(c);
 
         let mut point = point;
         while let Some(next_p) = f(self, &point) {
-            let next_c = self.lines()[next_p.y][next_p.x].c;
+            let next_c = self.lines[next_p.y][next_p.x].c;
             if next_c != c && (delim || is_delim(next_c)) {
                 break;
             }
@@ -609,34 +612,16 @@ impl Term {
         if self.is_wrap_line(y) {
             return x;
         }
-        while x > 0 && self.lines()[y][x - 1].c == ' ' {
+        while x > 0 && self.lines[y][x - 1].c == ' ' {
             x -= 1
         }
         x
     }
 
     fn is_wrap_line(&self, y: usize) -> bool {
-        self.lines()[y][self.cols - 1]
+        self.lines[y][self.cols - 1]
             .prop
             .attr
             .contains(GlyphAttr::WRAP)
-    }
-
-    #[inline]
-    fn lines(&self) -> &[Vec<Glyph>] {
-        if self.mode.contains(TermMode::ALTSCREEN) {
-            &self.alt_lines
-        } else {
-            &self.lines
-        }
-    }
-
-    #[inline]
-    fn lines_mut(&mut self) -> &mut [Vec<Glyph>] {
-        if self.mode.contains(TermMode::ALTSCREEN) {
-            &mut self.alt_lines
-        } else {
-            &mut self.lines
-        }
     }
 }
