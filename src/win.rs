@@ -392,6 +392,9 @@ impl Win {
 
     fn undraw_cursor(&mut self, term: &Term) {
         let (x, y) = (self.cursor_x, self.cursor_y);
+        if x >= term.cols || y >= term.rows {
+            return;
+        }
         let g = term.get_glyph(x, y);
         self.draw_cells(&[g.c], g.prop, x * self.cw, y * self.ch);
     }
