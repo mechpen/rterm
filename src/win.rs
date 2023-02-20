@@ -20,6 +20,8 @@ use std::os::unix::io::RawFd;
 use std::ptr::null_mut;
 use std::slice;
 
+use nix::libc;
+
 use anyhow::{anyhow, Result};
 use bitflags::bitflags;
 
@@ -97,6 +99,8 @@ pub struct Win {
     netwmname: x11::Atom,
     netwmiconname: x11::Atom,
     attributes: x11::XSetWindowAttributes,
+
+    ime: Option<Ime>,
 }
 
 impl Win {
@@ -107,6 +111,12 @@ impl Win {
         yoff: usize,
         font: Option<&str>,
     ) -> Result<Self> {
+        // both of these locale settings are important for XIM support
+        unsafe {
+            libc::setlocale(libc::LC_CTYPE, "\0".as_ptr() as *const i8);
+        }
+        x11::XSetLocaleModifiers("");
+
         let dpy = x11::XOpenDisplay()?;
         let scr = x11::XDefaultScreen(dpy);
         let vis = x11::XDefaultVisual(dpy, scr);
@@ -152,6 +162,7 @@ impl Win {
         attributes.colormap = cmap;
         attributes.background_pixel = colors[BG_COLOR].pixel;
         attributes.event_mask = x11::KEY_PRESS_MASK
+            | x11::FOCUS_CHANGE_MASK
             | x11::EXPOSURE_MASK
             | x11::VISIBILITY_CHANGE_MASK
             | x11::STRUCTURE_NOTIFY_MASK
@@ -198,6 +209,8 @@ impl Win {
         let netwmname = x11::XInternAtom(dpy, "_NET_WM_NAME", x11::False);
         let netwmiconname = x11::XInternAtom(dpy, "_NET_WM_ICON_NAME", x11::False);
 
+        let ime = Ime::new(dpy, win);
+
         Ok(Win {
             visible: true,
             mode: WinMode::empty(),
@@ -231,6 +244,8 @@ impl Win {
             netwmname,
             netwmiconname,
             attributes,
+
+            ime,
         })
     }
 
@@ -348,8 +363,12 @@ impl Win {
         }
         term.set_dirty(0..term.rows, false);
 
+        let (x, y) = (self.cursor_x, self.cursor_y);
         self.draw_cursor(term);
         self.finish_draw(term.cols, term.rows);
+        if (x, y) != (self.cursor_x, self.cursor_y) {
+            self.im_spot();
+        }
     }
 
     pub fn redraw(&mut self, term: &mut Term) {
@@ -365,7 +384,8 @@ impl Win {
         let mut count = 0;
         while x11::XPending(self.dpy) > 0 {
             let mut xev = x11::XNextEvent(self.dpy);
-            if x11::XFilterEvent(&mut xev, self.win) == x11::True {
+            // window target must be 0 to handle messages from an external IME
+            if x11::XFilterEvent(&mut xev, 0) == x11::True {
                 continue;
             }
             count += 1;
@@ -384,6 +404,8 @@ impl Win {
                 x11::BUTTON_RELEASE => self.button_release(xev, term, pty),
                 x11::SELECTION_NOTIFY => self.selection_notify(xev, term, pty),
                 x11::SELECTION_REQUEST => self.selection_request(xev),
+                x11::FOCUS_IN => self.focus_change(true),
+                x11::FOCUS_OUT => self.focus_change(false),
                 _ => println!("event type {:?}", xev_type),
             }
         }
@@ -538,7 +560,13 @@ impl Win {
         let mut xev = xev;
         let xev: &mut x11::XKeyEvent = x11::cast_event_mut(&mut xev);
         let mut buf = [0u8; 64];
-        let (ksym, mut len) = x11::XLookupString(xev, &mut buf);
+        let (ksym, mut len) = match &self.ime {
+            Some(ime) => match x11::Xutf8LookupString(ime.xic, xev, &mut buf) {
+                Some(r) => r,
+                None => return,
+            },
+            None => x11::XLookupString(xev, &mut buf),
+        };
 
         if let Some(function) = find_shortcut(ksym, xev.state) {
             function.execute(self, term);
@@ -748,6 +776,10 @@ impl Win {
         }
     }
 
+    fn focus_change(&self, is_focus_in: bool) {
+        self.im_focus(is_focus_in);
+    }
+
     fn to_truecolor(&self, col: usize) -> x11::XftColor {
         let colfg = x11::XRenderColor {
             alpha: 0xffff,
@@ -850,6 +882,25 @@ impl Win {
         x11::XFlush(self.dpy);
     }
 
+    fn im_focus(&self, is_focus_in: bool) {
+        let ime = match &self.ime { Some(ime) => ime, None => return };
+        if is_focus_in {
+            x11::XSetICFocus(ime.xic);
+        } else {
+            x11::XUnsetICFocus(ime.xic);
+        }
+    }
+
+    fn im_spot(&self) {
+        let ime = match &self.ime { Some(ime) => ime, None => return };
+        let spot = x11::XPoint {
+            x: (BORDERPX + self.cursor_x * self.cw) as i16,
+            y: (BORDERPX + self.cursor_y * self.ch) as i16,
+        };
+        let spotlist = x11::x_create_nested_spot_list(&spot);
+        x11::XSetICValues(ime.xic, spotlist);
+    }
+
     fn term_point(&self, xp: i32, yp: i32) -> (usize, usize) {
         (
             (xp as usize - BORDERPX) / self.cw,
@@ -894,7 +945,34 @@ impl Win {
 
 impl Drop for Win {
     fn drop(&mut self) {
+        self.ime = None;
         x11::XDestroyWindow(self.dpy, self.win);
         x11::XCloseDisplay(self.dpy);
+    }
+}
+
+pub struct Ime {
+    xim: x11::XIM,
+    xic: x11::XIC,
+}
+
+// FIXME: try to detect destroy/instantiate events? apparently attempting to
+// support this is "unsafe" and "racy" and possibly impossible without trying
+// to handle `BadWindow` errors
+impl Ime {
+    pub fn new(
+        dpy: x11::Display,
+        win: x11::Window
+    ) -> Option<Self> {
+        let xim = x11::XOpenIM(dpy)?;
+        let xic = x11::XCreateIC(win, xim)?;
+        return Some(Ime { xim, xic });
+    }
+}
+
+impl Drop for Ime {
+    fn drop(&mut self) {
+        x11::XDestroyIC(self.xic);
+        x11::XCloseIM(self.xim);
     }
 }
