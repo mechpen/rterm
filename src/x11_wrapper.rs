@@ -5,6 +5,7 @@ use crate::color::COLOR_NAMES;
 use std::convert::TryInto;
 use std::ffi::CStr;
 use std::ffi::CString;
+use std::marker::PhantomData;
 use std::mem;
 use std::os::raw::*;
 use std::ptr::{null, null_mut};
@@ -37,6 +38,9 @@ pub use xlib::XSetWindowAttributes;
 pub use xlib::XTextProperty;
 pub use xlib::XUTF8StringStyle;
 pub use xlib::GC;
+pub use xlib::XIM;
+pub use xlib::XIC;
+pub use xlib::XPoint;
 
 pub use xlib::GCGraphicsExposures as GC_GRAPHICS_EXPOSURES;
 pub use xlib::InputOutput as INPUT_OUTPUT;
@@ -50,6 +54,7 @@ pub use xlib::ButtonMotionMask as BUTTON_MOTION_MASK;
 pub use xlib::ButtonPressMask as BUTTON_PRESS_MASK;
 pub use xlib::ButtonReleaseMask as BUTTON_RELEASE_MASK;
 pub use xlib::ExposureMask as EXPOSURE_MASK;
+pub use xlib::FocusChangeMask as FOCUS_CHANGE_MASK;
 pub use xlib::KeyPressMask as KEY_PRESS_MASK;
 pub use xlib::PointerMotionMask as POINTER_MOTION_MASK;
 pub use xlib::StructureNotifyMask as STRUCTURE_NOTIFY_MASK;
@@ -70,6 +75,10 @@ pub use xlib::XButtonEvent;
 
 pub use xlib::Expose as EXPOSE;
 pub use xlib::MotionNotify as MOTION_NOTIFY;
+
+pub use xlib::FocusIn as FOCUS_IN;
+pub use xlib::FocusOut as FOCUS_OUT;
+pub use xlib::XFocusChangeEvent;
 
 pub use xlib::VisibilityFullyObscured;
 pub use xlib::VisibilityNotify as VISIBILITY_NOTIFY;
@@ -104,6 +113,18 @@ pub type Visual = *mut xlib::Visual;
 pub type XftFont = *mut xft::XftFont;
 pub type XftDraw = *mut xft::XftDraw;
 pub type FcPattern = *mut xft::FcPattern;
+
+// in C it's just a typedef for `void *`
+pub struct XVaNestedList<T> {
+    ptr: *mut c_void,
+    _data: PhantomData::<T>,
+}
+
+impl<T> Drop for XVaNestedList<T> {
+    fn drop(&mut self) {
+        XFree(self.ptr);
+    }
+}
 
 fn cast<T, V>(v: V) -> T
 where
@@ -247,6 +268,13 @@ pub fn XSetWMProtocols(dpy: Display, win: Window, protocols: &mut [Atom]) {
     }
 }
 
+pub fn XSetLocaleModifiers(modifier_list: &str) {
+    let modifier_list = CString::new(modifier_list).unwrap();
+    unsafe {
+        xlib::XSetLocaleModifiers(modifier_list.as_ptr());
+    }
+}
+
 pub fn XMapWindow(dpy: Display, win: Window) {
     unsafe {
         xlib::XMapWindow(dpy, win);
@@ -338,6 +366,25 @@ pub fn XLookupString(event: &mut XKeyEvent, buf: &mut [u8]) -> (KeySym, usize) {
         )
     };
     (ksym, cast(len))
+}
+
+pub fn Xutf8LookupString(xic: XIC, event: &mut XKeyEvent, buf: &mut [u8]) -> Option<(KeySym, usize)> {
+    let mut ksym: KeySym = 0;
+    let mut status: c_int = 0;
+    let len = unsafe {
+        xlib::Xutf8LookupString(
+            xic,
+            event,
+            buf.as_mut_ptr() as *mut _,
+            cast(buf.len()),
+            &mut ksym,
+            &mut status,
+        )
+    };
+    if status == xlib::XBufferOverflow {
+        return None;
+    }
+    Some((ksym, cast(len)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -725,5 +772,68 @@ pub fn xloadcolor(
         XftColorAllocName(dpy, vis, cmap, col)
     } else {
         Err(anyhow!("Invalid index/name in xloadcolor call!"))
+    }
+}
+
+pub fn XOpenIM(dpy: Display) -> Option<XIM> {
+    unsafe {
+        let xim = xlib::XOpenIM(dpy, null_mut(), null_mut(), null_mut());
+        if xim.is_null() {
+            return None;
+        }
+        return Some(xim);
+    }
+}
+
+pub fn XCloseIM(xim: XIM) {
+    if !xim.is_null() {
+        unsafe { xlib::XCloseIM(xim); }
+    }
+}
+
+pub fn XCreateIC(win: Window, xim: XIM) -> Option<XIC> {
+    unsafe {
+        let xic = xlib::XCreateIC(
+            xim,
+            xlib::XNInputStyle_0.as_ptr(), xlib::XIMPreeditNothing | xlib::XIMStatusNothing,
+            xlib::XNClientWindow_0.as_ptr(), win,
+            null::<*const u8>()
+        );
+        if xic.is_null() {
+            println!("XCreateIC: Could not create input context.");
+            return None;
+        }
+        return Some(xic);
+    }
+}
+
+pub fn XDestroyIC(xic: XIC) {
+    if !xic.is_null() {
+        unsafe { xlib::XDestroyIC(xic); }
+    }
+}
+
+pub fn XSetICFocus(xic: XIC) {
+    unsafe { xlib::XSetICFocus(xic); }
+}
+
+pub fn XUnsetICFocus(xic: XIC) {
+    unsafe { xlib::XUnsetICFocus(xic); }
+}
+
+pub fn XSetICValues<T>(xic: XIC, spotlist: XVaNestedList<T>) {
+    unsafe { xlib::XSetICValues(xic, xlib::XNPreeditAttributes_0.as_ptr(), spotlist.ptr, null::<*const u8>()); }
+}
+
+pub fn x_create_nested_spot_list<'a>(spot: &'a xlib::XPoint) -> XVaNestedList<&'a xlib::XPoint> {
+    unsafe {
+        XVaNestedList {
+            ptr: xlib::XVaCreateNestedList(
+                0,
+                xlib::XNSpotLocation_0.as_ptr(), spot,
+                null::<*const c_void>()
+            ),
+            _data: PhantomData,
+        }
     }
 }
