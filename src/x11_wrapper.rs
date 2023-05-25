@@ -481,7 +481,7 @@ pub fn XConvertSelection(
 pub fn XChangeWindowAttributes(
     dpy: Display,
     win: Window,
-    event_mask: u64,
+    event_mask: c_ulong,
     mut attributes: XSetWindowAttributes,
 ) {
     unsafe {

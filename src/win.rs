@@ -706,7 +706,7 @@ impl Win {
                 return;
             }
 
-            let len = (nitems * (format as u64) / 8) as usize;
+            let len = ((nitems * (format as u32)) / 8) as usize;
             let buf = unsafe { slice::from_raw_parts(data, len) };
             self.term_write(term, pty, buf);
             x11::XFree(data as *mut _);
@@ -714,7 +714,7 @@ impl Win {
             if rem == 0 {
                 break;
             } else {
-                ofs += (nitems * (format as u64) / 32) as i64;
+                ofs += ((nitems * (format as u32)) / 32) as c_long;
             }
         }
     }
