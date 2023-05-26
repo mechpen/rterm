@@ -5,6 +5,7 @@ use std::mem;
 use bitflags::bitflags;
 
 bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct GlyphAttr: u16 {
         // font modifiers
         const BOLD       = 1 << 0;
@@ -17,7 +18,7 @@ bitflags! {
         const STRUCK     = 1 << 7;
 
         const FONT_MASK  = (1 << 8) - 1;
-        const BOLD_FAINT = Self::BOLD.bits | Self::FAINT.bits;
+        const BOLD_FAINT = Self::BOLD.bits() | Self::FAINT.bits();
 
         // at line wrap
         const WRAP       = 1 << 8;

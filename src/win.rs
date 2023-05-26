@@ -39,10 +39,10 @@ bitflags! {
         const MOUSESGR    = 1 << 9;
         const MOUSEX10    = 1 << 10;
         const MOUSEMANY   = 1 << 11;
-        const MOUSE       = (Self::MOUSEBTN.bits |
-                             Self::MOUSEMOTION.bits |
-                             Self::MOUSEX10.bits |
-                             Self::MOUSEMANY.bits);
+        const MOUSE       = (Self::MOUSEBTN.bits() |
+                             Self::MOUSEMOTION.bits() |
+                             Self::MOUSEX10.bits() |
+                             Self::MOUSEMANY.bits());
         const FOCUS       = 1 << 12;
     }
 }
@@ -706,7 +706,7 @@ impl Win {
                 return;
             }
 
-            let len = ((nitems * (format as u32)) / 8) as usize;
+            let len = (nitems * (format as c_ulong)/ 8) as usize;
             let buf = unsafe { slice::from_raw_parts(data, len) };
             self.term_write(term, pty, buf);
             x11::XFree(data as *mut _);
@@ -714,7 +714,7 @@ impl Win {
             if rem == 0 {
                 break;
             } else {
-                ofs += ((nitems * (format as u32)) / 32) as c_long;
+                ofs += (nitems * (format as c_ulong) / 32) as c_long;
             }
         }
     }
