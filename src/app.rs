@@ -6,6 +6,7 @@ use crate::win::{Win, next_blink_timeout};
 
 use std::fs::File;
 use std::io::prelude::*;
+use std::os::fd::{BorrowedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
@@ -80,8 +81,8 @@ impl App {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        let win_fd = self.win.fd();
-        let pty_fd = self.pty.fd();
+        let win_fd = unsafe { BorrowedFd::borrow_raw(self.win.fd()) };
+        let pty_fd = unsafe { BorrowedFd::borrow_raw(self.pty.fd()) };
         let mut buf = [0; 8192];
         let mut delay_start = 0;
         let mut timeout = TimeVal::milliseconds(next_blink_timeout());

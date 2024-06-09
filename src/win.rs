@@ -16,7 +16,7 @@ use crate::utils::{epoch_ms, term_decode};
 use crate::x11_wrapper as x11;
 
 use std::os::raw::*;
-use std::os::unix::io::RawFd;
+use std::os::fd::RawFd;
 use std::ptr::null_mut;
 use std::slice;
 
@@ -338,7 +338,7 @@ impl Win {
     }
 
     pub fn title(&self) -> Option<String> {
-        return x11::xgettitle(self.dpy, self.win, self.netwmname);
+        x11::xgettitle(self.dpy, self.win, self.netwmname)
     }
 
     pub fn fd(&self) -> RawFd {
@@ -394,6 +394,7 @@ impl Win {
                 x11::EXPOSE => (),
                 x11::MAP_NOTIFY => (),
                 x11::KEY_RELEASE => (),
+                x11::REPARENT_NOTIFY => (),
                 x11::KEY_PRESS => self.key_press(xev, term, pty),
                 x11::CLIENT_MESSAGE => self.client_message(xev),
                 x11::CONFIGURE_NOTIFY => self.configure_notify(xev, term, pty),

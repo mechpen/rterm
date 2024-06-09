@@ -620,7 +620,9 @@ impl<'a> Perform for Performer<'a> {
             // CUF -- Cursor <n> Forward | HPR -- Cursor <n> Forward
             ('C', None) | ('a', None) => term.move_to(x + arg0_or(1), y),
             // DA -- Device Attributes
-            ('c', _) if arg0_or(0) == 0 => self.pty.write(VTIDEN),
+            ('c', None) if arg0_or(0) == 0 => self.pty.write(VTIDEN),
+            // DA2 -- Secondary Device Attributes
+            ('c', Some(b'>')) if arg0_or(0) == 0 => {} // FIXME
             // CUB -- Cursor <n> Backward
             ('D', None) => term.move_to(x.saturating_sub(arg0_or(1)), y),
             // VPA -- Move to <row>

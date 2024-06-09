@@ -1,6 +1,6 @@
 [package]
 name = "rterm"
-version = "0.0.8"
+version = "0.0.9"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "A port of suckless terminal to rust."
@@ -9,10 +9,10 @@ keywords = ["st", "terminal"]
 
 [dependencies]
 x11 = ">=2"
-nix = ">=0.22"
+nix = {version = ">=0.22", features = ["ioctl", "poll", "process", "signal", "term", "user"]}
 vte = ">=0.10"
-bitflags = ">=1.2"
+bitflags = ">=2"
 unicode-width = ">=0.1"
 servo-fontconfig = ">=0.5"
 anyhow = ">=1.0"
-clap = {version = ">=3", features = ["derive"]}
+clap = {version = ">=4", features = ["derive"]}

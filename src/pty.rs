@@ -2,7 +2,7 @@ use crate::shell::exec_shell;
 
 use std::collections::VecDeque;
 use std::convert::TryFrom;
-use std::os::unix::io::RawFd;
+use std::os::fd::{AsFd, AsRawFd, OwnedFd, RawFd};
 
 use anyhow::Result;
 use nix::errno::Errno;
@@ -10,12 +10,12 @@ use nix::ioctl_write_ptr_bad;
 use nix::libc;
 use nix::pty::{forkpty, ForkptyResult};
 use nix::sys::signal::{kill, Signal};
-use nix::unistd::{read, write, ForkResult, Pid};
+use nix::unistd::{read, write, Pid};
 
 ioctl_write_ptr_bad!(resizepty, libc::TIOCSWINSZ, libc::winsize);
 
 pub struct Pty {
-    master_fd: RawFd,
+    master_fd: OwnedFd,
     child_pid: Pid,
     write_buf: VecDeque<u8>,
 }
@@ -28,23 +28,19 @@ impl Pty {
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
-        let ForkptyResult {
-            master,
-            fork_result,
-        } = unsafe { forkpty(Some(&ws), None)? };
-        let child = match fork_result {
-            ForkResult::Parent { child } => child,
-            ForkResult::Child => {
-                exec_shell();
-                unreachable!();
-            }
-        };
-
-        Ok(Pty {
-            master_fd: master,
-            child_pid: child,
-            write_buf: VecDeque::new(),
-        })
+	match unsafe { forkpty(Some(&ws), None)? } {
+	    ForkptyResult::Child => {
+		exec_shell();
+		unreachable!();
+	    }
+	    ForkptyResult::Parent { master, child } => {
+		Ok(Pty {
+		    master_fd: master,
+		    child_pid: child,
+		    write_buf: VecDeque::new(),
+		})
+	    }
+	}
     }
 
     pub fn resize(&mut self, cols: usize, rows: usize) -> Result<()> {
@@ -55,17 +51,17 @@ impl Pty {
             ws_ypixel: 0,
         };
         unsafe {
-            resizepty(self.master_fd, &ws)?;
+            resizepty(self.master_fd.as_raw_fd(), &ws)?;
         }
         Ok(())
     }
 
     pub fn fd(&self) -> RawFd {
-        self.master_fd
+        self.master_fd.as_raw_fd()
     }
 
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
-        match read(self.master_fd, buf) {
+        match read(self.master_fd.as_raw_fd(), buf) {
             Ok(n) => Ok(n),
             Err(Errno::EIO) => Ok(0),
             Err(err) => Err(err.into()),
@@ -78,9 +74,9 @@ impl Pty {
 
     pub fn flush(&mut self) -> Result<()> {
         let (first, second) = self.write_buf.as_slices();
-        let mut n = write(self.master_fd, first)?;
+        let mut n = write(self.master_fd.as_fd(), first)?;
         if n == first.len() {
-            n += write(self.master_fd, second)?;
+            n += write(self.master_fd.as_fd(), second)?;
         }
         self.write_buf.drain(..n);
         Ok(())

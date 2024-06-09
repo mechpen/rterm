@@ -33,7 +33,6 @@ pub use xlib::True;
 pub use xlib::Window;
 pub use xlib::XEvent;
 pub use xlib::XGCValues;
-pub use xlib::XICCEncodingStyle;
 pub use xlib::XSetWindowAttributes;
 pub use xlib::XTextProperty;
 pub use xlib::XUTF8StringStyle;
@@ -75,10 +74,10 @@ pub use xlib::XButtonEvent;
 
 pub use xlib::Expose as EXPOSE;
 pub use xlib::MotionNotify as MOTION_NOTIFY;
+pub use xlib::ReparentNotify as REPARENT_NOTIFY;
 
 pub use xlib::FocusIn as FOCUS_IN;
 pub use xlib::FocusOut as FOCUS_OUT;
-pub use xlib::XFocusChangeEvent;
 
 pub use xlib::VisibilityFullyObscured;
 pub use xlib::VisibilityNotify as VISIBILITY_NOTIFY;
