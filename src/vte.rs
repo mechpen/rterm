@@ -39,7 +39,7 @@ impl Vte {
         &mut self, buf: &[u8], win: &mut Win, term: &mut Term, pty: &mut Pty
     ) {
         let mut performer = Performer::new(win, term, pty, self.last_c.take());
-        buf.iter().for_each(|&b| self.parser.advance(&mut performer, b));
+        self.parser.advance(&mut performer, buf);
         self.last_c = performer.last_c.take();
     }
 }

@@ -61,7 +61,7 @@ impl Pty {
     }
 
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
-        match read(self.master_fd.as_raw_fd(), buf) {
+        match read(&self.master_fd, buf) {
             Ok(n) => Ok(n),
             Err(Errno::EIO) => Ok(0),
             Err(err) => Err(err.into()),
